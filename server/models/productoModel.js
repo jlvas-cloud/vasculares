@@ -30,7 +30,17 @@ const productoSchema = new Schema({
     trim: true,
   },
   specifications: {
-    size: { type: String },
+    size: { type: String }, // Legacy field, kept for display (e.g., "2.25/13")
+    diameter: {
+      type: Number,
+      min: 0,
+      description: 'Stent/guide diameter in mm (e.g., 2.25, 2.5, 3.0)',
+    },
+    length: {
+      type: Number,
+      min: 0,
+      description: 'Stent/guide length in mm (e.g., 13, 15, 18, 22)',
+    },
     type: { type: String },
     description: { type: String },
   },

@@ -431,13 +431,51 @@ exports.getPlanningData = async (req, res, next) => {
     const { category, locationId } = req.query;
     const isLocationView = !!locationId;
 
+    // Helper to get diameter/length - uses numeric fields, falls back to parsing size string
+    const getDimensions = (product) => {
+      const specs = product.specifications || {};
+      // Use numeric fields if available
+      if (specs.diameter != null && specs.length != null) {
+        return { diameter: specs.diameter, length: specs.length };
+      }
+      // Fallback: parse size string (e.g., "2.25/13")
+      if (specs.size && typeof specs.size === 'string') {
+        const parts = specs.size.split('/');
+        return {
+          diameter: parseFloat(parts[0]) || 999,
+          length: parseFloat(parts[1]) || 999,
+        };
+      }
+      return { diameter: 999, length: 999 }; // Sort products without size at the end
+    };
+
     // Get all products with filters
     const productQuery = { active: true };
     if (category) productQuery.category = category;
 
-    const products = await Productos.find(productQuery)
-      .sort({ 'specifications.size': 1, name: 1 })
-      .lean();
+    let products = await Productos.find(productQuery).lean();
+
+    // Sort by: category, name (product line), diameter, then length
+    products.sort((a, b) => {
+      // First by category
+      if (a.category !== b.category) {
+        return a.category.localeCompare(b.category);
+      }
+      // Then by product name (e.g., "Orsiro" before "Resolute")
+      const nameA = a.name.split(' ')[0] || a.name;
+      const nameB = b.name.split(' ')[0] || b.name;
+      if (nameA !== nameB) {
+        return nameA.localeCompare(nameB);
+      }
+      // Then by diameter
+      const dimA = getDimensions(a);
+      const dimB = getDimensions(b);
+      if (dimA.diameter !== dimB.diameter) {
+        return dimA.diameter - dimB.diameter;
+      }
+      // Finally by length
+      return dimA.length - dimB.length;
+    });
 
     // Get stock levels per product
     const mongoose = require('mongoose');

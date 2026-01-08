@@ -61,9 +61,16 @@ export default function Products() {
     const formData = new FormData(e.target);
 
     const specifications = {};
-    const size = formData.get('size');
+    const diameter = formData.get('diameter');
+    const length = formData.get('length');
     const type = formData.get('type');
-    if (size) specifications.size = size;
+
+    if (diameter) specifications.diameter = parseFloat(diameter);
+    if (length) specifications.length = parseFloat(length);
+    // Auto-generate size string for display (e.g., "2.25/13")
+    if (diameter && length) {
+      specifications.size = `${diameter}/${length}`;
+    }
     if (type) specifications.type = type;
 
     const inventorySettings = {};
@@ -152,10 +159,27 @@ export default function Products() {
                   <Label htmlFor="subcategory">Subcategoría</Label>
                   <Input id="subcategory" name="subcategory" placeholder="Orsiro" />
                 </div>
-                <div className="grid grid-cols-2 gap-4">
+                <div className="grid grid-cols-3 gap-4">
                   <div className="grid gap-2">
-                    <Label htmlFor="size">Tamaño</Label>
-                    <Input id="size" name="size" placeholder="2.25/13" />
+                    <Label htmlFor="diameter">Diametro (mm)</Label>
+                    <Input
+                      id="diameter"
+                      name="diameter"
+                      type="number"
+                      step="0.25"
+                      min="0"
+                      placeholder="2.25"
+                    />
+                  </div>
+                  <div className="grid gap-2">
+                    <Label htmlFor="length">Longitud (mm)</Label>
+                    <Input
+                      id="length"
+                      name="length"
+                      type="number"
+                      min="0"
+                      placeholder="13"
+                    />
                   </div>
                   <div className="grid gap-2">
                     <Label htmlFor="type">Tipo</Label>
@@ -252,10 +276,14 @@ export default function Products() {
                     <span className="font-medium">{product.subcategory}</span>
                   </div>
                 )}
-                {product.specifications?.size && (
+                {(product.specifications?.diameter || product.specifications?.size) && (
                   <div className="flex justify-between">
                     <span className="text-muted-foreground">Tamaño:</span>
-                    <span className="font-medium">{product.specifications.size}</span>
+                    <span className="font-medium">
+                      {product.specifications?.diameter && product.specifications?.length
+                        ? `${product.specifications.diameter}/${product.specifications.length}`
+                        : product.specifications?.size}
+                    </span>
                   </div>
                 )}
                 {product.missionCode && (
