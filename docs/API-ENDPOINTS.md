@@ -76,11 +76,20 @@ Create new product
   "category": "STENTS_CORONARIOS",
   "subcategory": "Orsiro",
   "specifications": {
-    "size": "2.25/13",
+    "diameter": 2.25,
+    "length": 13,
     "type": "Regular"
+  },
+  "inventorySettings": {
+    "targetStockWarehouse": 10,
+    "reorderPoint": 5,
+    "minStockLevel": 2,
+    "maxStockLevel": 20
   }
 }
 ```
+
+Note: `specifications.size` is auto-generated from diameter/length (e.g., "2.25/13").
 
 ### PUT `/productos/:id`
 Update product
@@ -419,6 +428,142 @@ Get dashboard statistics
 
 ---
 
+## Analytics
+
+### GET `/analytics/consumption/monthly`
+Get monthly consumption data per product
+
+**Query params:**
+- `productId` - Filter by product
+- `startDate` / `endDate` - Date range
+- `year` - Filter by year (e.g., 2025)
+
+### GET `/analytics/consumption/by-location`
+Get consumption grouped by location
+
+**Query params:**
+- `productId` - Filter by product
+- `locationId` - Filter by location
+- `startDate` / `endDate` - Date range
+
+### GET `/analytics/consumption/trends`
+Get consumption trends and averages
+
+**Query params:**
+- `months` - Number of months to analyze (default: 3)
+
+### GET `/analytics/consumption/by-size`
+Get consumption grouped by product size
+
+**Query params:**
+- `category` - Filter by category
+- `startDate` / `endDate` - Date range
+
+### GET `/analytics/planning-data`
+Get comprehensive planning data for all products
+
+**Query params:**
+- `category` - Filter by category (GUIAS | STENTS_CORONARIOS)
+- `locationId` - Get data for specific location (omit for warehouse view)
+
+**Response (Warehouse View):**
+```json
+[
+  {
+    "productId": "...",
+    "name": "Orsiro 2.25/13",
+    "code": 364475,
+    "category": "STENTS_CORONARIOS",
+    "size": "2.25/13",
+    "warehouseStock": 15,
+    "consignedStock": 40,
+    "totalStock": 55,
+    "avgMonthlyConsumption": 3.5,
+    "daysOfCoverage": 128,
+    "targetStock": 20,
+    "reorderPoint": 10,
+    "minStock": 5,
+    "maxStock": 30,
+    "suggestedOrder": 5,
+    "status": "ok"
+  }
+]
+```
+
+**Response (Location View):**
+```json
+[
+  {
+    "productId": "...",
+    "name": "Orsiro 2.25/13",
+    "currentStock": 5,
+    "avgMonthlyConsumption": 2.0,
+    "daysOfCoverage": 75,
+    "targetStock": 8,
+    "reorderPoint": 4,
+    "minStock": 2,
+    "suggestedConsignment": 3,
+    "status": "ok",
+    "hasTarget": true
+  }
+]
+```
+
+---
+
+## Inventory Targets (Per-Location)
+
+### GET `/inventario-objetivos`
+List inventory targets
+
+**Query params:**
+- `productId` - Filter by product
+- `locationId` - Filter by location
+- `active` - Filter by status (true | false)
+
+### GET `/inventario-objetivos/:id`
+Get single target by ID
+
+### POST `/inventario-objetivos`
+Create or update target (upsert)
+
+**Body:**
+```json
+{
+  "productId": "product_id_here",
+  "locationId": "location_id_here",
+  "targetStock": 10,
+  "reorderPoint": 5,
+  "minStockLevel": 2,
+  "notes": "Optional notes"
+}
+```
+
+**Response:**
+```json
+{
+  "message": "Target created successfully",
+  "objetivo": { ... }
+}
+```
+
+### PUT `/inventario-objetivos/:id`
+Update target
+
+**Body:**
+```json
+{
+  "targetStock": 15,
+  "reorderPoint": 8,
+  "minStockLevel": 3
+}
+```
+
+### DELETE `/inventario-objetivos/:id`
+Deactivate target (soft delete)
+
+---
+
 ## Complete Flow Example
 
 ### 1. Create Product
@@ -427,7 +572,11 @@ POST /api/productos
 {
   "name": "Orsiro 2.25/13",
   "code": 364475,
-  "category": "STENTS_CORONARIOS"
+  "category": "STENTS_CORONARIOS",
+  "specifications": {
+    "diameter": 2.25,
+    "length": 13
+  }
 }
 ```
 

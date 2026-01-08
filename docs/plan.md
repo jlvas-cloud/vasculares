@@ -77,13 +77,26 @@ MongoDB Cluster (shared with Xirugias & Nomina)
   category: String,          // "GUIAS" | "STENTS_CORONARIOS"
   subcategory: String,       // "Hydro", "Orsiro", etc.
   specifications: {
-    size: String,            // "2.25/13", "F 014"
+    size: String,            // "2.25/13" (auto-generated from diameter/length)
+    diameter: Number,        // 2.25, 2.5, 3.0 (mm) - for proper sorting
+    length: Number,          // 13, 15, 18 (mm) - for proper sorting
     type: String,            // "Straight", "Regular"
+  },
+  inventorySettings: {       // Warehouse-level targets
+    targetStockWarehouse: Number,  // Ideal quantity in central warehouse
+    reorderPoint: Number,          // Trigger order when below this
+    minStockLevel: Number,         // Minimum safety stock
+    maxStockLevel: Number,         // Maximum stock capacity
   },
   active: Boolean,
   createdAt: Date,
   updatedAt: Date,
-  createdBy: ObjectId
+  createdBy: ObjectId,
+  historia: [{               // Change history
+    fecha: Date,
+    user: { _id, firstname, lastname },
+    accion: String
+  }]
 }
 ```
 
@@ -241,6 +254,33 @@ MongoDB Cluster (shared with Xirugias & Nomina)
 }
 ```
 
+### 8. Inventory Targets Collection (`inventarioObjetivos`)
+
+Per-location inventory targets for planning and replenishment.
+
+```javascript
+{
+  _id: ObjectId,
+  productId: ObjectId,       // ref: productos
+  locationId: ObjectId,      // ref: locaciones (hospital/clinic)
+
+  // Target levels for this product at this location
+  targetStock: Number,       // Ideal quantity to maintain
+  reorderPoint: Number,      // Trigger consignment when below this
+  minStockLevel: Number,     // Minimum safety stock
+
+  // Metadata
+  notes: String,
+  active: Boolean,
+  createdBy: { _id, firstname, lastname },
+  updatedBy: { _id, firstname, lastname },
+  createdAt: Date,
+  updatedAt: Date
+}
+
+// Compound unique index: { productId: 1, locationId: 1 }
+```
+
 ---
 
 ## API Endpoints
@@ -307,6 +347,22 @@ MongoDB Cluster (shared with Xirugias & Nomina)
 - `GET /api/dashboard/top-productos` - Most consumed products
 - `GET /api/dashboard/top-locaciones` - Most active locations
 
+### Analytics (Consumption & Planning)
+- `GET /api/analytics/consumption/monthly` - Monthly consumption by product
+- `GET /api/analytics/consumption/by-location` - Consumption grouped by location
+- `GET /api/analytics/consumption/trends` - Consumption trends and averages
+- `GET /api/analytics/consumption/by-size` - Consumption by product size
+- `GET /api/analytics/planning-data` - Comprehensive planning data
+  - Query params: `category`, `locationId`
+  - Returns: products with stock, consumption avg, suggested orders/consignments
+
+### Inventory Targets (Per-Location)
+- `GET /api/inventario-objetivos` - List targets (filter by productId, locationId)
+- `GET /api/inventario-objetivos/:id` - Get single target
+- `POST /api/inventario-objetivos` - Upsert target (create or update)
+- `PUT /api/inventario-objetivos/:id` - Update target
+- `DELETE /api/inventario-objetivos/:id` - Deactivate target
+
 ---
 
 ## Frontend Structure
@@ -351,7 +407,15 @@ MongoDB Cluster (shared with Xirugias & Nomina)
    - Export to Excel/PDF
    - Custom report builder
 
-8. **Settings** (`/configuracion`)
+8. **Planning** (`/planificacion`)
+   - Excel-like product planning table
+   - Location selector (Warehouse vs Hospital/Clinic)
+   - Editable stock targets per row
+   - Auto-calculated: consumption avg, days coverage, suggested orders
+   - Summary cards: critical items, warnings, total to order
+   - Products sorted by: category → name → diameter → length
+
+9. **Settings** (`/configuracion`)
    - Company info
    - User management
    - Stock thresholds
@@ -381,43 +445,50 @@ MongoDB Cluster (shared with Xirugias & Nomina)
 
 ## Implementation Phases
 
-### Phase 1: Foundation (Week 1-2)
+### Phase 1: Foundation
 - ✅ Project setup (folder structure, dependencies)
 - ✅ Database schemas and models
 - ✅ Authentication integration (shared JWT)
 - ✅ Basic getModel.js for multi-tenant
 - ✅ API structure (routes, controllers)
-- Products CRUD
-- Locations CRUD
+- ✅ Products CRUD with inventory settings
+- ✅ Locations CRUD
 
-### Phase 2: Core Inventory (Week 3-4)
-- Inventory tracking logic
-- Transaction recording
-- Basic inventory views
-- Dashboard with key metrics
+### Phase 2: Core Inventory
+- ✅ Inventory tracking logic (lot-based)
+- ✅ Transaction recording (warehouse receipt, consignment, consumption)
+- ✅ Basic inventory views
+- ✅ Dashboard with key metrics
+- ✅ Low stock and expiration alerts
 
-### Phase 3: Transactions & POs (Week 5-6)
+### Phase 3: Planning & Analytics
+- ✅ Analytics endpoints (monthly consumption, trends, by-location, by-size)
+- ✅ Planning data endpoint (warehouse + location views)
+- ✅ Planning page with Excel-like table
+- ✅ Editable stock targets (via dialog)
+- ✅ Per-location inventory targets (inventarioObjetivos)
+- ✅ Product sorting: category → name → diameter → length
+- ✅ Separate diameter/length fields for proper sorting
+
+### Phase 4: Transactions & POs
 - Purchase orders workflow
-- Consignment transactions
-- Consumption recording
 - Returns and adjustments
-- Batch/lot tracking
+- Transfer between locations
 
-### Phase 4: Reporting (Week 7-8)
+### Phase 5: Reporting
 - General summary report
 - Warehouse summaries
-- Monthly consumption
+- Monthly consumption reports
 - Replenishment needs
 - Excel export functionality
 
-### Phase 5: Data Migration (Week 9)
+### Phase 6: Data Migration
 - Import historical data from Excel
 - Validate data integrity
 - Map Excel structure to database
 
-### Phase 6: Polish & Deploy (Week 10)
-- Alerts and notifications
-- Advanced filtering
+### Phase 7: Polish & Deploy
+- Advanced filtering and search
 - Performance optimization
 - User testing
 - Deployment to production
@@ -602,5 +673,8 @@ MongoDB Cluster (shared with Xirugias & Nomina)
 ---
 
 **Created:** January 7, 2025
-**Last Updated:** January 7, 2025
-**Version:** 1.0
+**Last Updated:** January 8, 2025
+**Version:** 1.1
+
+### Changelog
+- v1.1 (Jan 8): Added Planning & Analytics phase, inventarioObjetivos collection, diameter/length fields for sorting
