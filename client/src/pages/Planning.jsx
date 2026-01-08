@@ -643,19 +643,21 @@ export default function Planning() {
                         <td className="p-2 text-right text-green-600 font-medium">
                           {item.warehouseStock}
                         </td>
-                        <td className="p-2 text-right">
-                          <Input
-                            type="number"
-                            min="0"
-                            max={Math.min(item.suggestedConsignment, item.warehouseStock)}
-                            value={item.quantityToSend}
-                            onChange={(e) => {
-                              const newItems = [...consignmentItems];
-                              newItems[index].quantityToSend = Math.max(0, parseInt(e.target.value) || 0);
-                              setConsignmentItems(newItems);
-                            }}
-                            className="w-20 text-right"
-                          />
+                        <td className="p-2">
+                          <div className="flex justify-end">
+                            <Input
+                              type="number"
+                              min="0"
+                              max={Math.min(item.suggestedConsignment, item.warehouseStock)}
+                              value={item.quantityToSend}
+                              onChange={(e) => {
+                                const newItems = [...consignmentItems];
+                                newItems[index].quantityToSend = Math.max(0, parseInt(e.target.value) || 0);
+                                setConsignmentItems(newItems);
+                              }}
+                              className="w-20 text-right"
+                            />
+                          </div>
                         </td>
                       </tr>
                     ))}
