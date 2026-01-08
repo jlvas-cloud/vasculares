@@ -422,7 +422,7 @@ exports.getPlanningData = async (req, res, next) => {
   try {
     const { getInventarioObjetivosModel } = require('../getModel');
 
-    await getLocacionesModel(req.companyId);
+    const Locaciones = await getLocacionesModel(req.companyId);
     const Productos = await getProductosModel(req.companyId);
     const Inventario = await getInventarioModel(req.companyId);
     const Transacciones = await getTransaccionesModel(req.companyId);
@@ -430,6 +430,14 @@ exports.getPlanningData = async (req, res, next) => {
 
     const { category, locationId } = req.query;
     const isLocationView = !!locationId;
+
+    // Get location details if viewing specific location
+    let viewedLocation = null;
+    let isViewingWarehouse = false;
+    if (isLocationView) {
+      viewedLocation = await Locaciones.findById(locationId).lean();
+      isViewingWarehouse = viewedLocation?.type === 'WAREHOUSE';
+    }
 
     // Helper to get diameter/length - uses numeric fields, falls back to parsing size string
     const getDimensions = (product) => {
@@ -545,7 +553,7 @@ exports.getPlanningData = async (req, res, next) => {
             consignedStock: {
               $sum: {
                 $cond: [
-                  { $eq: ['$location.type', 'CENTRO'] },
+                  { $in: ['$location.type', ['CENTRO', 'HOSPITAL', 'CLINIC']] },
                   '$quantityAvailable',
                   0,
                 ],
@@ -591,18 +599,31 @@ exports.getPlanningData = async (req, res, next) => {
       });
     }
 
-    // Calculate consumption averages (last 3 months)
-    const threeMonthsAgo = new Date();
-    threeMonthsAgo.setMonth(threeMonthsAgo.getMonth() - 3);
+    // Calculate consumption/outflow averages (up to 12 months, adaptive based on available data)
+    const twelveMonthsAgo = new Date();
+    twelveMonthsAgo.setMonth(twelveMonthsAgo.getMonth() - 12);
 
-    const consumptionMatch = {
-      type: 'CONSUMPTION',
-      transactionDate: { $gte: threeMonthsAgo },
+    let consumptionMatch = {
+      transactionDate: { $gte: twelveMonthsAgo },
     };
 
-    // If location view, filter consumption by that location
+    // If viewing specific location:
+    // - Warehouse: calculate outflow (CONSIGNMENT transactions FROM warehouse)
+    // - Centro: calculate consumption (CONSUMPTION transactions AT centro)
+    // - Aggregated warehouse view: calculate total system consumption
     if (isLocationView) {
-      consumptionMatch.toLocationId = new mongoose.Types.ObjectId(locationId);
+      if (isViewingWarehouse) {
+        // Warehouse outflow: consignments from this warehouse
+        consumptionMatch.type = 'CONSIGNMENT';
+        consumptionMatch.fromLocationId = new mongoose.Types.ObjectId(locationId);
+      } else {
+        // Centro consumption: actual usage at this centro
+        consumptionMatch.type = 'CONSUMPTION';
+        consumptionMatch.toLocationId = new mongoose.Types.ObjectId(locationId);
+      }
+    } else {
+      // Aggregated warehouse view: total system consumption (all centros)
+      consumptionMatch.type = 'CONSUMPTION';
     }
 
     const consumptionData = await Transacciones.aggregate([
@@ -611,11 +632,33 @@ exports.getPlanningData = async (req, res, next) => {
         $group: {
           _id: '$productId',
           totalConsumed: { $sum: '$quantity' },
+          firstTransaction: { $min: '$transactionDate' },
+          lastTransaction: { $max: '$transactionDate' },
         },
       },
       {
         $addFields: {
-          avgMonthlyConsumption: { $divide: ['$totalConsumed', 3] },
+          // Calculate actual months of history (min 1 month to avoid division by zero)
+          monthsOfHistory: {
+            $max: [
+              1,
+              {
+                $ceil: {
+                  $divide: [
+                    { $subtract: ['$lastTransaction', '$firstTransaction'] },
+                    1000 * 60 * 60 * 24 * 30, // Convert ms to months (approx 30 days)
+                  ],
+                },
+              },
+            ],
+          },
+        },
+      },
+      {
+        $addFields: {
+          avgMonthlyConsumption: {
+            $divide: ['$totalConsumed', '$monthsOfHistory'],
+          },
         },
       },
     ]);

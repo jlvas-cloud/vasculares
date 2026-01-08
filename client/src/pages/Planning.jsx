@@ -294,6 +294,7 @@ export default function Planning() {
                     <>
                       <th className="text-right p-2 font-medium">Stock Almacén</th>
                       <th className="text-right p-2 font-medium">En Consignación</th>
+                      <th className="text-right p-2 font-medium">Total Stock</th>
                     </>
                   ) : (
                     <th className="text-right p-2 font-medium">Stock Actual</th>
@@ -351,6 +352,11 @@ export default function Planning() {
                             </td>
                             <td className="p-2 text-right text-muted-foreground">
                               {product.consignedStock}
+                            </td>
+                            <td className="p-2 text-right">
+                              <span className="font-medium">
+                                {product.totalStock}
+                              </span>
                             </td>
                           </>
                         ) : (
