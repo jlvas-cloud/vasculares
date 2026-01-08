@@ -100,4 +100,13 @@ export const analyticsApi = {
   getPlanningData: (params) => api.get('/analytics/planning-data', { params }),
 };
 
+// Inventario Objetivos API (Per-location targets)
+export const inventarioObjetivosApi = {
+  getAll: (params) => api.get('/inventario-objetivos', { params }),
+  getOne: (id) => api.get(`/inventario-objetivos/${id}`),
+  upsert: (data) => api.post('/inventario-objetivos', data), // Create or update
+  update: (id, data) => api.put(`/inventario-objetivos/${id}`, data),
+  delete: (id) => api.delete(`/inventario-objetivos/${id}`),
+};
+
 export default api;

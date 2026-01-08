@@ -134,7 +134,7 @@ exports.update = async (req, res, next) => {
       return res.status(404).json({ error: 'Producto no encontrado' });
     }
 
-    const { name, code, missionCode, category, subcategory, specifications, active } = req.body;
+    const { name, code, missionCode, category, subcategory, specifications, inventorySettings, active } = req.body;
 
     // If changing code, check if new code exists
     if (code && code !== producto.code) {
@@ -151,6 +151,12 @@ exports.update = async (req, res, next) => {
     if (category !== undefined) producto.category = category;
     if (subcategory !== undefined) producto.subcategory = subcategory;
     if (specifications !== undefined) producto.specifications = specifications;
+    if (inventorySettings !== undefined) {
+      producto.inventorySettings = {
+        ...producto.inventorySettings,
+        ...inventorySettings,
+      };
+    }
     if (active !== undefined) producto.active = active;
 
     // Add to historia

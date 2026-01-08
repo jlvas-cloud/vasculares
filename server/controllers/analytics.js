@@ -414,16 +414,22 @@ exports.getConsumptionBySize = async (req, res, next) => {
 /**
  * GET /api/analytics/planning-data
  * Get comprehensive planning data for all products
- * (Excel-like view data)
+ * Supports both warehouse view and per-location view
+ * @query category - Filter by product category
+ * @query locationId - Get data for specific location (if not provided, shows warehouse data)
  */
 exports.getPlanningData = async (req, res, next) => {
   try {
+    const { getInventarioObjetivosModel } = require('../getModel');
+
     await getLocacionesModel(req.companyId);
     const Productos = await getProductosModel(req.companyId);
     const Inventario = await getInventarioModel(req.companyId);
     const Transacciones = await getTransaccionesModel(req.companyId);
+    const InventarioObjetivos = await getInventarioObjetivosModel(req.companyId);
 
-    const { category } = req.query;
+    const { category, locationId } = req.query;
+    const isLocationView = !!locationId;
 
     // Get all products with filters
     const productQuery = { active: true };
@@ -434,58 +440,78 @@ exports.getPlanningData = async (req, res, next) => {
       .lean();
 
     // Get stock levels per product
-    const stockLevels = await Inventario.aggregate([
-      {
-        $lookup: {
-          from: 'locaciones',
-          localField: 'locationId',
-          foreignField: '_id',
-          as: 'location',
-        },
-      },
-      { $unwind: '$location' },
-      {
-        $group: {
-          _id: '$productId',
-          warehouseStock: {
-            $sum: {
-              $cond: [
-                { $eq: ['$location.type', 'WAREHOUSE'] },
-                '$quantityAvailable',
-                0,
-              ],
-            },
+    let stockLevels;
+    if (isLocationView) {
+      // Stock at specific location
+      stockLevels = await Inventario.aggregate([
+        { $match: { locationId: require('mongoose').Types.ObjectId(locationId) } },
+        {
+          $group: {
+            _id: '$productId',
+            locationStock: { $sum: '$quantityAvailable' },
           },
-          consignedStock: {
-            $sum: {
-              $cond: [
-                {
-                  $or: [
-                    { $eq: ['$location.type', 'HOSPITAL'] },
-                    { $eq: ['$location.type', 'CLINIC'] },
-                  ],
-                },
-                '$quantityAvailable',
-                0,
-              ],
-            },
-          },
-          totalStock: { $sum: '$quantityAvailable' },
         },
-      },
-    ]);
+      ]);
+    } else {
+      // Warehouse view with consigned breakdown
+      stockLevels = await Inventario.aggregate([
+        {
+          $lookup: {
+            from: 'locaciones',
+            localField: 'locationId',
+            foreignField: '_id',
+            as: 'location',
+          },
+        },
+        { $unwind: '$location' },
+        {
+          $group: {
+            _id: '$productId',
+            warehouseStock: {
+              $sum: {
+                $cond: [
+                  { $eq: ['$location.type', 'WAREHOUSE'] },
+                  '$quantityAvailable',
+                  0,
+                ],
+              },
+            },
+            consignedStock: {
+              $sum: {
+                $cond: [
+                  {
+                    $or: [
+                      { $eq: ['$location.type', 'HOSPITAL'] },
+                      { $eq: ['$location.type', 'CLINIC'] },
+                    ],
+                  },
+                  '$quantityAvailable',
+                  0,
+                ],
+              },
+            },
+            totalStock: { $sum: '$quantityAvailable' },
+          },
+        },
+      ]);
+    }
 
     // Calculate consumption averages (last 3 months)
     const threeMonthsAgo = new Date();
     threeMonthsAgo.setMonth(threeMonthsAgo.getMonth() - 3);
 
+    const consumptionMatch = {
+      type: 'CONSUMPTION',
+      transactionDate: { $gte: threeMonthsAgo },
+    };
+
+    // If location view, filter consumption by that location
+    if (isLocationView) {
+      consumptionMatch.toLocationId = require('mongoose').Types.ObjectId(locationId);
+    }
+
     const consumptionData = await Transacciones.aggregate([
-      {
-        $match: {
-          type: 'CONSUMPTION',
-          transactionDate: { $gte: threeMonthsAgo },
-        },
-      },
+      { $match: consumptionMatch },
       {
         $group: {
           _id: '$productId',
@@ -498,6 +524,19 @@ exports.getPlanningData = async (req, res, next) => {
         },
       },
     ]);
+
+    // Get per-location targets if viewing a specific location
+    let locationTargets = {};
+    if (isLocationView) {
+      const targets = await InventarioObjetivos.find({
+        locationId,
+        active: true,
+      }).lean();
+
+      targets.forEach((target) => {
+        locationTargets[target.productId.toString()] = target;
+      });
+    }
 
     // Create maps for easy lookup
     const stockMap = {};
@@ -512,59 +551,104 @@ exports.getPlanningData = async (req, res, next) => {
 
     // Combine all data
     const planningData = products.map((product) => {
-      const stock = stockMap[product._id.toString()] || {
-        warehouseStock: 0,
-        consignedStock: 0,
-        totalStock: 0,
-      };
-
       const consumption = consumptionMap[product._id.toString()] || {
         avgMonthlyConsumption: 0,
       };
 
-      const settings = product.inventorySettings || {};
-      const targetStock = settings.targetStockWarehouse || 0;
-      const reorderPoint = settings.reorderPoint || 0;
-      const minStock = settings.minStockLevel || 0;
-      const maxStock = settings.maxStockLevel || 0;
-
-      // Calculate suggested order quantity
-      const suggestedOrder = Math.max(0, targetStock - stock.warehouseStock);
-
-      // Determine status
-      let status = 'ok';
-      if (stock.warehouseStock < minStock) {
-        status = 'critical';
-      } else if (stock.warehouseStock <= reorderPoint) {
-        status = 'warning';
-      }
-
-      // Calculate coverage days
-      const daysOfCoverage =
-        consumption.avgMonthlyConsumption > 0
-          ? Math.round(
-              (stock.warehouseStock / consumption.avgMonthlyConsumption) * 30
-            )
-          : 999;
-
-      return {
+      let result = {
         productId: product._id,
         name: product.name,
         code: product.code,
         category: product.category,
         size: product.specifications?.size || 'N/A',
-        warehouseStock: stock.warehouseStock,
-        consignedStock: stock.consignedStock,
-        totalStock: stock.totalStock,
         avgMonthlyConsumption: Math.round(consumption.avgMonthlyConsumption * 100) / 100,
-        targetStock,
-        reorderPoint,
-        minStock,
-        maxStock,
-        suggestedOrder,
-        daysOfCoverage,
-        status,
       };
+
+      if (isLocationView) {
+        // Location-specific view
+        const stock = stockMap[product._id.toString()] || { locationStock: 0 };
+        const locationTarget = locationTargets[product._id.toString()];
+
+        const currentStock = stock.locationStock;
+        const targetStock = locationTarget?.targetStock || 0;
+        const reorderPoint = locationTarget?.reorderPoint || 0;
+        const minStock = locationTarget?.minStockLevel || 0;
+
+        // Calculate suggested consignment (not order)
+        const suggestedConsignment = Math.max(0, targetStock - currentStock);
+
+        // Determine status
+        let status = 'ok';
+        if (currentStock < minStock) {
+          status = 'critical';
+        } else if (currentStock <= reorderPoint) {
+          status = 'warning';
+        }
+
+        // Calculate coverage days
+        const daysOfCoverage =
+          consumption.avgMonthlyConsumption > 0
+            ? Math.round((currentStock / consumption.avgMonthlyConsumption) * 30)
+            : 999;
+
+        result = {
+          ...result,
+          currentStock,
+          targetStock,
+          reorderPoint,
+          minStock,
+          suggestedConsignment,
+          daysOfCoverage,
+          status,
+          hasTarget: !!locationTarget,
+        };
+      } else {
+        // Warehouse view
+        const stock = stockMap[product._id.toString()] || {
+          warehouseStock: 0,
+          consignedStock: 0,
+          totalStock: 0,
+        };
+
+        const settings = product.inventorySettings || {};
+        const targetStock = settings.targetStockWarehouse || 0;
+        const reorderPoint = settings.reorderPoint || 0;
+        const minStock = settings.minStockLevel || 0;
+        const maxStock = settings.maxStockLevel || 0;
+
+        // Calculate suggested order quantity
+        const suggestedOrder = Math.max(0, targetStock - stock.warehouseStock);
+
+        // Determine status
+        let status = 'ok';
+        if (stock.warehouseStock < minStock) {
+          status = 'critical';
+        } else if (stock.warehouseStock <= reorderPoint) {
+          status = 'warning';
+        }
+
+        // Calculate coverage days
+        const daysOfCoverage =
+          consumption.avgMonthlyConsumption > 0
+            ? Math.round((stock.warehouseStock / consumption.avgMonthlyConsumption) * 30)
+            : 999;
+
+        result = {
+          ...result,
+          warehouseStock: stock.warehouseStock,
+          consignedStock: stock.consignedStock,
+          totalStock: stock.totalStock,
+          targetStock,
+          reorderPoint,
+          minStock,
+          maxStock,
+          suggestedOrder,
+          daysOfCoverage,
+          status,
+        };
+      }
+
+      return result;
     });
 
     res.json(planningData);
