@@ -28,12 +28,14 @@ const productosRoutes = require('./routes/productos');
 const locacionesRoutes = require('./routes/locaciones');
 const inventarioRoutes = require('./routes/inventario');
 const transaccionesRoutes = require('./routes/transacciones');
+const analyticsRoutes = require('./routes/analytics');
 
 app.use('/api/auth', authRoutes);
 app.use('/api/productos', productosRoutes);
 app.use('/api/locaciones', locacionesRoutes);
 app.use('/api/inventario', inventarioRoutes);
 app.use('/api/transacciones', transaccionesRoutes);
+app.use('/api/analytics', analyticsRoutes);
 
 // Serve static files in production
 if (process.env.NODE_ENV === 'production') {

@@ -1,0 +1,575 @@
+/**
+ * Analytics Controller
+ * Provides consumption analytics and inventory insights
+ */
+const {
+  getTransaccionesModel,
+  getProductosModel,
+  getLocacionesModel,
+  getInventarioModel,
+} = require('../getModel');
+
+/**
+ * GET /api/analytics/consumption/monthly
+ * Get monthly consumption data per product
+ */
+exports.getMonthlyConsumption = async (req, res, next) => {
+  try {
+    await getProductosModel(req.companyId);
+    const Transacciones = await getTransaccionesModel(req.companyId);
+
+    const { productId, startDate, endDate, year } = req.query;
+
+    // Build date range
+    let dateFilter = {};
+    if (year) {
+      dateFilter = {
+        $gte: new Date(`${year}-01-01`),
+        $lte: new Date(`${year}-12-31T23:59:59`),
+      };
+    } else if (startDate || endDate) {
+      if (startDate) dateFilter.$gte = new Date(startDate);
+      if (endDate) dateFilter.$lte = new Date(endDate);
+    } else {
+      // Default to last 12 months
+      const twelveMonthsAgo = new Date();
+      twelveMonthsAgo.setMonth(twelveMonthsAgo.getMonth() - 12);
+      dateFilter.$gte = twelveMonthsAgo;
+    }
+
+    // Build match criteria
+    const matchCriteria = {
+      type: 'CONSUMPTION',
+      transactionDate: dateFilter,
+    };
+    if (productId) {
+      matchCriteria.productId = productId;
+    }
+
+    // Aggregate by month and product
+    const monthlyData = await Transacciones.aggregate([
+      { $match: matchCriteria },
+      {
+        $group: {
+          _id: {
+            productId: '$productId',
+            year: { $year: '$transactionDate' },
+            month: { $month: '$transactionDate' },
+          },
+          totalQuantity: { $sum: '$quantity' },
+          transactionCount: { $sum: 1 },
+        },
+      },
+      {
+        $lookup: {
+          from: 'productos',
+          localField: '_id.productId',
+          foreignField: '_id',
+          as: 'product',
+        },
+      },
+      { $unwind: '$product' },
+      {
+        $project: {
+          _id: 0,
+          productId: '$_id.productId',
+          productName: '$product.name',
+          productCode: '$product.code',
+          productSize: '$product.specifications.size',
+          year: '$_id.year',
+          month: '$_id.month',
+          totalQuantity: 1,
+          transactionCount: 1,
+        },
+      },
+      { $sort: { year: 1, month: 1, productName: 1 } },
+    ]);
+
+    res.json(monthlyData);
+  } catch (error) {
+    console.error('Error getting monthly consumption:', error);
+    next(error);
+  }
+};
+
+/**
+ * GET /api/analytics/consumption/by-location
+ * Get consumption data grouped by location
+ */
+exports.getConsumptionByLocation = async (req, res, next) => {
+  try {
+    await getProductosModel(req.companyId);
+    await getLocacionesModel(req.companyId);
+    const Transacciones = await getTransaccionesModel(req.companyId);
+
+    const { productId, locationId, startDate, endDate } = req.query;
+
+    // Build date range (default to last 3 months)
+    let dateFilter = {};
+    if (startDate || endDate) {
+      if (startDate) dateFilter.$gte = new Date(startDate);
+      if (endDate) dateFilter.$lte = new Date(endDate);
+    } else {
+      const threeMonthsAgo = new Date();
+      threeMonthsAgo.setMonth(threeMonthsAgo.getMonth() - 3);
+      dateFilter.$gte = threeMonthsAgo;
+    }
+
+    // Build match criteria
+    const matchCriteria = {
+      type: 'CONSUMPTION',
+      transactionDate: dateFilter,
+    };
+    if (productId) matchCriteria.productId = productId;
+    if (locationId) matchCriteria.toLocationId = locationId;
+
+    // Aggregate by location
+    const locationData = await Transacciones.aggregate([
+      { $match: matchCriteria },
+      {
+        $group: {
+          _id: {
+            locationId: '$toLocationId',
+            productId: '$productId',
+          },
+          totalQuantity: { $sum: '$quantity' },
+          transactionCount: { $sum: 1 },
+        },
+      },
+      {
+        $lookup: {
+          from: 'locaciones',
+          localField: '_id.locationId',
+          foreignField: '_id',
+          as: 'location',
+        },
+      },
+      { $unwind: '$location' },
+      {
+        $lookup: {
+          from: 'productos',
+          localField: '_id.productId',
+          foreignField: '_id',
+          as: 'product',
+        },
+      },
+      { $unwind: '$product' },
+      {
+        $project: {
+          _id: 0,
+          locationId: '$_id.locationId',
+          locationName: '$location.name',
+          locationType: '$location.type',
+          productId: '$_id.productId',
+          productName: '$product.name',
+          productCode: '$product.code',
+          productSize: '$product.specifications.size',
+          totalQuantity: 1,
+          transactionCount: 1,
+        },
+      },
+      { $sort: { locationName: 1, productName: 1 } },
+    ]);
+
+    res.json(locationData);
+  } catch (error) {
+    console.error('Error getting consumption by location:', error);
+    next(error);
+  }
+};
+
+/**
+ * GET /api/analytics/consumption/trends
+ * Get consumption trends and averages per product
+ */
+exports.getConsumptionTrends = async (req, res, next) => {
+  try {
+    await getProductosModel(req.companyId);
+    await getInventarioModel(req.companyId);
+    const Transacciones = await getTransaccionesModel(req.companyId);
+    const Inventario = await getInventarioModel(req.companyId);
+
+    const { months = 3 } = req.query; // Default to 3 months
+
+    // Calculate date range
+    const startDate = new Date();
+    startDate.setMonth(startDate.getMonth() - parseInt(months));
+
+    // Get consumption per product with averages
+    const trends = await Transacciones.aggregate([
+      {
+        $match: {
+          type: 'CONSUMPTION',
+          transactionDate: { $gte: startDate },
+        },
+      },
+      {
+        $group: {
+          _id: '$productId',
+          totalConsumed: { $sum: '$quantity' },
+          transactionCount: { $sum: 1 },
+          firstTransaction: { $min: '$transactionDate' },
+          lastTransaction: { $max: '$transactionDate' },
+        },
+      },
+      {
+        $lookup: {
+          from: 'productos',
+          localField: '_id',
+          foreignField: '_id',
+          as: 'product',
+        },
+      },
+      { $unwind: '$product' },
+      {
+        $addFields: {
+          // Calculate days between first and last transaction
+          daysActive: {
+            $divide: [
+              { $subtract: ['$lastTransaction', '$firstTransaction'] },
+              1000 * 60 * 60 * 24, // Convert ms to days
+            ],
+          },
+          monthsAnalyzed: parseInt(months),
+        },
+      },
+      {
+        $addFields: {
+          // Average monthly consumption
+          avgMonthlyConsumption: {
+            $cond: {
+              if: { $gt: ['$monthsAnalyzed', 0] },
+              then: { $divide: ['$totalConsumed', '$monthsAnalyzed'] },
+              else: 0,
+            },
+          },
+          // Average per transaction
+          avgPerTransaction: {
+            $cond: {
+              if: { $gt: ['$transactionCount', 0] },
+              then: { $divide: ['$totalConsumed', '$transactionCount'] },
+              else: 0,
+            },
+          },
+        },
+      },
+      {
+        $project: {
+          _id: 0,
+          productId: '$_id',
+          productName: '$product.name',
+          productCode: '$product.code',
+          productSize: '$product.specifications.size',
+          category: '$product.category',
+          totalConsumed: 1,
+          transactionCount: 1,
+          avgMonthlyConsumption: { $round: ['$avgMonthlyConsumption', 2] },
+          avgPerTransaction: { $round: ['$avgPerTransaction', 2] },
+          firstTransaction: 1,
+          lastTransaction: 1,
+          monthsAnalyzed: 1,
+        },
+      },
+      { $sort: { totalConsumed: -1 } },
+    ]);
+
+    // Get current stock levels for each product
+    const stockLevels = await Inventario.aggregate([
+      {
+        $group: {
+          _id: '$productId',
+          totalAvailable: { $sum: '$quantityAvailable' },
+          totalConsigned: { $sum: '$quantityConsigned' },
+        },
+      },
+    ]);
+
+    // Merge stock data with trends
+    const stockMap = {};
+    stockLevels.forEach((item) => {
+      stockMap[item._id.toString()] = item;
+    });
+
+    const enrichedTrends = trends.map((trend) => {
+      const stock = stockMap[trend.productId.toString()] || {
+        totalAvailable: 0,
+        totalConsigned: 0,
+      };
+
+      // Calculate days of coverage (stock / avg monthly consumption * 30)
+      const daysOfCoverage =
+        trend.avgMonthlyConsumption > 0
+          ? Math.round(
+              (stock.totalAvailable / trend.avgMonthlyConsumption) * 30
+            )
+          : 999;
+
+      return {
+        ...trend,
+        currentStock: stock.totalAvailable,
+        currentConsigned: stock.totalConsigned,
+        daysOfCoverage,
+        status:
+          daysOfCoverage < 15
+            ? 'critical'
+            : daysOfCoverage < 30
+            ? 'warning'
+            : 'ok',
+      };
+    });
+
+    res.json(enrichedTrends);
+  } catch (error) {
+    console.error('Error getting consumption trends:', error);
+    next(error);
+  }
+};
+
+/**
+ * GET /api/analytics/consumption/by-size
+ * Get consumption grouped by product size
+ */
+exports.getConsumptionBySize = async (req, res, next) => {
+  try {
+    await getProductosModel(req.companyId);
+    const Transacciones = await getTransaccionesModel(req.companyId);
+
+    const { category, startDate, endDate } = req.query;
+
+    // Build date range (default to last 3 months)
+    let dateFilter = {};
+    if (startDate || endDate) {
+      if (startDate) dateFilter.$gte = new Date(startDate);
+      if (endDate) dateFilter.$lte = new Date(endDate);
+    } else {
+      const threeMonthsAgo = new Date();
+      threeMonthsAgo.setMonth(threeMonthsAgo.getMonth() - 3);
+      dateFilter.$gte = threeMonthsAgo;
+    }
+
+    // Build match criteria
+    const matchCriteria = {
+      type: 'CONSUMPTION',
+      transactionDate: dateFilter,
+    };
+
+    // Aggregate by size
+    const sizeData = await Transacciones.aggregate([
+      { $match: matchCriteria },
+      {
+        $lookup: {
+          from: 'productos',
+          localField: 'productId',
+          foreignField: '_id',
+          as: 'product',
+        },
+      },
+      { $unwind: '$product' },
+      ...(category
+        ? [{ $match: { 'product.category': category } }]
+        : []),
+      {
+        $group: {
+          _id: {
+            size: '$product.specifications.size',
+            category: '$product.category',
+          },
+          totalQuantity: { $sum: '$quantity' },
+          transactionCount: { $sum: 1 },
+          products: { $addToSet: '$product.name' },
+        },
+      },
+      {
+        $project: {
+          _id: 0,
+          size: '$_id.size',
+          category: '$_id.category',
+          totalQuantity: 1,
+          transactionCount: 1,
+          productCount: { $size: '$products' },
+          avgPerTransaction: {
+            $cond: {
+              if: { $gt: ['$transactionCount', 0] },
+              then: {
+                $round: [
+                  { $divide: ['$totalQuantity', '$transactionCount'] },
+                  2,
+                ],
+              },
+              else: 0,
+            },
+          },
+        },
+      },
+      { $sort: { category: 1, size: 1 } },
+    ]);
+
+    res.json(sizeData);
+  } catch (error) {
+    console.error('Error getting consumption by size:', error);
+    next(error);
+  }
+};
+
+/**
+ * GET /api/analytics/planning-data
+ * Get comprehensive planning data for all products
+ * (Excel-like view data)
+ */
+exports.getPlanningData = async (req, res, next) => {
+  try {
+    await getLocacionesModel(req.companyId);
+    const Productos = await getProductosModel(req.companyId);
+    const Inventario = await getInventarioModel(req.companyId);
+    const Transacciones = await getTransaccionesModel(req.companyId);
+
+    const { category } = req.query;
+
+    // Get all products with filters
+    const productQuery = { active: true };
+    if (category) productQuery.category = category;
+
+    const products = await Productos.find(productQuery)
+      .sort({ 'specifications.size': 1, name: 1 })
+      .lean();
+
+    // Get stock levels per product
+    const stockLevels = await Inventario.aggregate([
+      {
+        $lookup: {
+          from: 'locaciones',
+          localField: 'locationId',
+          foreignField: '_id',
+          as: 'location',
+        },
+      },
+      { $unwind: '$location' },
+      {
+        $group: {
+          _id: '$productId',
+          warehouseStock: {
+            $sum: {
+              $cond: [
+                { $eq: ['$location.type', 'WAREHOUSE'] },
+                '$quantityAvailable',
+                0,
+              ],
+            },
+          },
+          consignedStock: {
+            $sum: {
+              $cond: [
+                {
+                  $or: [
+                    { $eq: ['$location.type', 'HOSPITAL'] },
+                    { $eq: ['$location.type', 'CLINIC'] },
+                  ],
+                },
+                '$quantityAvailable',
+                0,
+              ],
+            },
+          },
+          totalStock: { $sum: '$quantityAvailable' },
+        },
+      },
+    ]);
+
+    // Calculate consumption averages (last 3 months)
+    const threeMonthsAgo = new Date();
+    threeMonthsAgo.setMonth(threeMonthsAgo.getMonth() - 3);
+
+    const consumptionData = await Transacciones.aggregate([
+      {
+        $match: {
+          type: 'CONSUMPTION',
+          transactionDate: { $gte: threeMonthsAgo },
+        },
+      },
+      {
+        $group: {
+          _id: '$productId',
+          totalConsumed: { $sum: '$quantity' },
+        },
+      },
+      {
+        $addFields: {
+          avgMonthlyConsumption: { $divide: ['$totalConsumed', 3] },
+        },
+      },
+    ]);
+
+    // Create maps for easy lookup
+    const stockMap = {};
+    stockLevels.forEach((item) => {
+      stockMap[item._id.toString()] = item;
+    });
+
+    const consumptionMap = {};
+    consumptionData.forEach((item) => {
+      consumptionMap[item._id.toString()] = item;
+    });
+
+    // Combine all data
+    const planningData = products.map((product) => {
+      const stock = stockMap[product._id.toString()] || {
+        warehouseStock: 0,
+        consignedStock: 0,
+        totalStock: 0,
+      };
+
+      const consumption = consumptionMap[product._id.toString()] || {
+        avgMonthlyConsumption: 0,
+      };
+
+      const settings = product.inventorySettings || {};
+      const targetStock = settings.targetStockWarehouse || 0;
+      const reorderPoint = settings.reorderPoint || 0;
+      const minStock = settings.minStockLevel || 0;
+      const maxStock = settings.maxStockLevel || 0;
+
+      // Calculate suggested order quantity
+      const suggestedOrder = Math.max(0, targetStock - stock.warehouseStock);
+
+      // Determine status
+      let status = 'ok';
+      if (stock.warehouseStock < minStock) {
+        status = 'critical';
+      } else if (stock.warehouseStock <= reorderPoint) {
+        status = 'warning';
+      }
+
+      // Calculate coverage days
+      const daysOfCoverage =
+        consumption.avgMonthlyConsumption > 0
+          ? Math.round(
+              (stock.warehouseStock / consumption.avgMonthlyConsumption) * 30
+            )
+          : 999;
+
+      return {
+        productId: product._id,
+        name: product.name,
+        code: product.code,
+        category: product.category,
+        size: product.specifications?.size || 'N/A',
+        warehouseStock: stock.warehouseStock,
+        consignedStock: stock.consignedStock,
+        totalStock: stock.totalStock,
+        avgMonthlyConsumption: Math.round(consumption.avgMonthlyConsumption * 100) / 100,
+        targetStock,
+        reorderPoint,
+        minStock,
+        maxStock,
+        suggestedOrder,
+        daysOfCoverage,
+        status,
+      };
+    });
+
+    res.json(planningData);
+  } catch (error) {
+    console.error('Error getting planning data:', error);
+    next(error);
+  }
+};

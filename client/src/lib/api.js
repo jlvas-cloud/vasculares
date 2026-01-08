@@ -88,4 +88,16 @@ export const inventarioApi = {
   getDashboardStats: () => api.get('/inventario/dashboard/stats'),
 };
 
+// Analytics API
+export const analyticsApi = {
+  // Consumption analytics
+  getMonthlyConsumption: (params) => api.get('/analytics/consumption/monthly', { params }),
+  getConsumptionByLocation: (params) => api.get('/analytics/consumption/by-location', { params }),
+  getConsumptionTrends: (params) => api.get('/analytics/consumption/trends', { params }),
+  getConsumptionBySize: (params) => api.get('/analytics/consumption/by-size', { params }),
+
+  // Planning data
+  getPlanningData: (params) => api.get('/analytics/planning-data', { params }),
+};
+
 export default api;

@@ -12,6 +12,7 @@ import Consignment from './pages/Consignment';
 import Consumption from './pages/Consumption';
 import Inventory from './pages/Inventory';
 import TransactionHistory from './pages/TransactionHistory';
+import Planning from './pages/Planning';
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -54,6 +55,7 @@ function App() {
                         <Route path="/consumption" element={<Consumption />} />
                         <Route path="/inventory" element={<Inventory />} />
                         <Route path="/transactions" element={<TransactionHistory />} />
+                        <Route path="/planning" element={<Planning />} />
                       </Routes>
                     </Layout>
                   </PrivateRoute>

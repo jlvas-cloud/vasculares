@@ -66,6 +66,17 @@ export default function Products() {
     if (size) specifications.size = size;
     if (type) specifications.type = type;
 
+    const inventorySettings = {};
+    const targetStock = formData.get('targetStockWarehouse');
+    const reorderPoint = formData.get('reorderPoint');
+    const minStock = formData.get('minStockLevel');
+    const maxStock = formData.get('maxStockLevel');
+
+    if (targetStock) inventorySettings.targetStockWarehouse = parseInt(targetStock);
+    if (reorderPoint) inventorySettings.reorderPoint = parseInt(reorderPoint);
+    if (minStock) inventorySettings.minStockLevel = parseInt(minStock);
+    if (maxStock) inventorySettings.maxStockLevel = parseInt(maxStock);
+
     const data = {
       name: formData.get('name'),
       code: parseInt(formData.get('code')),
@@ -76,6 +87,10 @@ export default function Products() {
 
     if (Object.keys(specifications).length > 0) {
       data.specifications = specifications;
+    }
+
+    if (Object.keys(inventorySettings).length > 0) {
+      data.inventorySettings = inventorySettings;
     }
 
     createMutation.mutate(data);
@@ -145,6 +160,57 @@ export default function Products() {
                   <div className="grid gap-2">
                     <Label htmlFor="type">Tipo</Label>
                     <Input id="type" name="type" placeholder="Regular" />
+                  </div>
+                </div>
+
+                {/* Inventory Settings Section */}
+                <div className="border-t pt-4 mt-2">
+                  <h3 className="text-sm font-medium mb-3">Niveles de Inventario (Opcional)</h3>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="grid gap-2">
+                      <Label htmlFor="targetStockWarehouse">Stock Objetivo</Label>
+                      <Input
+                        id="targetStockWarehouse"
+                        name="targetStockWarehouse"
+                        type="number"
+                        min="0"
+                        placeholder="0"
+                      />
+                      <p className="text-xs text-muted-foreground">Cantidad ideal en almacén</p>
+                    </div>
+                    <div className="grid gap-2">
+                      <Label htmlFor="reorderPoint">Punto de Reorden</Label>
+                      <Input
+                        id="reorderPoint"
+                        name="reorderPoint"
+                        type="number"
+                        min="0"
+                        placeholder="0"
+                      />
+                      <p className="text-xs text-muted-foreground">Disparar orden cuando baje de este nivel</p>
+                    </div>
+                    <div className="grid gap-2">
+                      <Label htmlFor="minStockLevel">Stock Mínimo</Label>
+                      <Input
+                        id="minStockLevel"
+                        name="minStockLevel"
+                        type="number"
+                        min="0"
+                        placeholder="0"
+                      />
+                      <p className="text-xs text-muted-foreground">Stock de seguridad mínimo</p>
+                    </div>
+                    <div className="grid gap-2">
+                      <Label htmlFor="maxStockLevel">Stock Máximo</Label>
+                      <Input
+                        id="maxStockLevel"
+                        name="maxStockLevel"
+                        type="number"
+                        min="0"
+                        placeholder="0"
+                      />
+                      <p className="text-xs text-muted-foreground">Evitar sobr stock</p>
+                    </div>
                   </div>
                 </div>
               </div>

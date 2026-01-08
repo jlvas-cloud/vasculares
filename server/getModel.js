@@ -8,6 +8,7 @@ const inventarioSchema = require('./models/inventarioModel');
 const transaccionSchema = require('./models/transaccionModel');
 const ordenCompraSchema = require('./models/ordenCompraModel');
 const loteSchema = require('./models/loteModel');
+const inventarioObjetivosSchema = require('./models/inventarioObjetivosModel');
 const usersSchema = require('./models/usersModel');
 const companySchema = require('./models/companyModel');
 
@@ -104,6 +105,16 @@ exports.getOrdenesCompraModel = async (companyId) => {
 exports.getLotesModel = async (companyId) => {
   const db = await getVascularesDb(companyId, 'lotes', loteSchema);
   return db.model('lotes');
+};
+
+/**
+ * Get InventarioObjetivos model for a specific company
+ * Stored in: {companyId}_vasculares database
+ * Defines target stock levels per product per location
+ */
+exports.getInventarioObjetivosModel = async (companyId) => {
+  const db = await getVascularesDb(companyId, 'inventario_objetivos', inventarioObjetivosSchema);
+  return db.model('inventario_objetivos');
 };
 
 // ============================================

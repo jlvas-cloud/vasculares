@@ -1,0 +1,22 @@
+/**
+ * Analytics Routes
+ * Endpoints for consumption analytics and inventory insights
+ */
+const express = require('express');
+const router = express.Router();
+const analyticsController = require('../controllers/analytics');
+const { verifyUser, getCompanyId } = require('../util/authenticate');
+
+// All routes require authentication
+router.use(verifyUser, getCompanyId);
+
+// Consumption analytics endpoints
+router.get('/consumption/monthly', analyticsController.getMonthlyConsumption);
+router.get('/consumption/by-location', analyticsController.getConsumptionByLocation);
+router.get('/consumption/trends', analyticsController.getConsumptionTrends);
+router.get('/consumption/by-size', analyticsController.getConsumptionBySize);
+
+// Planning data endpoint (Excel-like view)
+router.get('/planning-data', analyticsController.getPlanningData);
+
+module.exports = router;
