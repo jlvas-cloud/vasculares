@@ -9,7 +9,7 @@ import { Input } from '../components/ui/input';
 import { Button } from '../components/ui/button';
 import { Badge } from '../components/ui/badge';
 import { useToast } from '../components/ui/toast';
-import { BarChart3, TrendingUp, AlertTriangle, CheckCircle2, Edit, Warehouse, Truck } from 'lucide-react';
+import { BarChart3, TrendingUp, AlertTriangle, CheckCircle2, Edit, Warehouse, Truck, Loader2, Check } from 'lucide-react';
 
 export default function Planning() {
   const [category, setCategory] = useState('all');
@@ -19,7 +19,7 @@ export default function Planning() {
   const [consignmentOpen, setConsignmentOpen] = useState(false);
   const [consignmentItems, setConsignmentItems] = useState([]);
   const queryClient = useQueryClient();
-  const { toast } = useToast();
+  const toast = useToast();
 
   const isWarehouseView = location === 'warehouse';
   const isCentroView = !isWarehouseView;
@@ -74,16 +74,23 @@ export default function Planning() {
   // Mutation for creating consignment
   const createConsignmentMutation = useMutation({
     mutationFn: consignacionesApi.create,
-    onSuccess: () => {
+    onSuccess: (response) => {
       queryClient.invalidateQueries(['planning-data']);
+
+      // Close dialog immediately
       setConsignmentOpen(false);
       setConsignmentItems([]);
-      toast.success('Consignación creada exitosamente');
+      createConsignmentMutation.reset();
+
+      // Show success toast after closing so it's visible
+      setTimeout(() => {
+        toast.success('¡Consignación creada exitosamente! Stock deducido del almacén.');
+      }, 100);
     },
     onError: (error) => {
       console.error('Consignment error:', error);
       const message = error?.response?.data?.error || error?.message || 'Error al crear consignación';
-      toast.error(message);
+      toast.error(`Error: ${message}`);
     },
   });
 
@@ -362,11 +369,15 @@ export default function Planning() {
                   {isWarehouseView ? (
                     <>
                       <th className="text-right p-2 font-medium">Stock Almacén</th>
-                      <th className="text-right p-2 font-medium">En Consignación</th>
-                      <th className="text-right p-2 font-medium">Total Stock</th>
+                      <th className="text-right p-2 font-medium">En Tránsito</th>
+                      <th className="text-right p-2 font-medium">En Centros</th>
+                      <th className="text-right p-2 font-medium">Total</th>
                     </>
                   ) : (
-                    <th className="text-right p-2 font-medium">Stock Actual</th>
+                    <>
+                      <th className="text-right p-2 font-medium">Stock Actual</th>
+                      <th className="text-right p-2 font-medium">En Tránsito</th>
+                    </>
                   )}
                   <th className="text-right p-2 font-medium">Consumo Mensual</th>
                   <th className="text-right p-2 font-medium">Días Cobertura</th>
@@ -419,31 +430,51 @@ export default function Planning() {
                                 {currentStock}
                               </span>
                             </td>
+                            <td className="p-2 text-right">
+                              {product.warehouseInTransit > 0 ? (
+                                <span className="text-orange-600 font-medium">
+                                  {product.warehouseInTransit}
+                                </span>
+                              ) : (
+                                <span className="text-muted-foreground">-</span>
+                              )}
+                            </td>
                             <td className="p-2 text-right text-muted-foreground">
                               {product.consignedStock}
                             </td>
                             <td className="p-2 text-right">
                               <span className="font-medium">
-                                {product.totalStock}
+                                {product.totalStock + (product.warehouseInTransit || 0)}
                               </span>
                             </td>
                           </>
                         ) : (
-                          <td className="p-2 text-right">
-                            <span
-                              className={`font-medium ${
-                                product.status === 'critical'
-                                  ? 'text-red-600'
-                                  : product.status === 'warning'
-                                  ? 'text-yellow-600'
-                                  : product.status === 'sin_configurar'
-                                  ? 'text-blue-600'
-                                  : 'text-green-600'
-                              }`}
-                            >
-                              {currentStock}
-                            </span>
-                          </td>
+                          <>
+                            <td className="p-2 text-right">
+                              <span
+                                className={`font-medium ${
+                                  product.status === 'critical'
+                                    ? 'text-red-600'
+                                    : product.status === 'warning'
+                                    ? 'text-yellow-600'
+                                    : product.status === 'sin_configurar'
+                                    ? 'text-blue-600'
+                                    : 'text-green-600'
+                                }`}
+                              >
+                                {currentStock}
+                              </span>
+                            </td>
+                            <td className="p-2 text-right">
+                              {product.inTransit > 0 ? (
+                                <span className="text-orange-600 font-medium">
+                                  {product.inTransit}
+                                </span>
+                              ) : (
+                                <span className="text-muted-foreground">-</span>
+                              )}
+                            </td>
+                          </>
                         )}
                         <td className="p-2 text-right">
                           {product.avgMonthlyConsumption > 0
@@ -515,7 +546,7 @@ export default function Planning() {
                   })
                 ) : (
                   <tr>
-                    <td colSpan="10" className="p-8 text-center text-muted-foreground">
+                    <td colSpan="12" className="p-8 text-center text-muted-foreground">
                       No hay productos disponibles
                     </td>
                   </tr>
@@ -681,14 +712,33 @@ export default function Planning() {
             </div>
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setConsignmentOpen(false)}>
+            <Button
+              variant="outline"
+              onClick={() => setConsignmentOpen(false)}
+              disabled={createConsignmentMutation.isPending}
+            >
               Cancelar
             </Button>
             <Button
               onClick={handleCreateConsignment}
-              disabled={createConsignmentMutation.isPending || consignmentItems.filter(i => i.included && i.quantityToSend > 0).length === 0}
+              disabled={
+                createConsignmentMutation.isPending ||
+                createConsignmentMutation.isSuccess ||
+                consignmentItems.filter(i => i.included && i.quantityToSend > 0).length === 0
+              }
+              className={createConsignmentMutation.isSuccess ? 'bg-green-600 hover:bg-green-700' : ''}
             >
-              {createConsignmentMutation.isPending ? 'Creando...' : 'Confirmar Consignación'}
+              {createConsignmentMutation.isPending && (
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+              )}
+              {createConsignmentMutation.isSuccess && (
+                <Check className="mr-2 h-4 w-4" />
+              )}
+              {createConsignmentMutation.isPending
+                ? 'Creando Consignación...'
+                : createConsignmentMutation.isSuccess
+                ? '¡Creada!'
+                : 'Confirmar Consignación'}
             </Button>
           </DialogFooter>
         </DialogContent>

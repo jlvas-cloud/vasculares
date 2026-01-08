@@ -12,6 +12,7 @@ const transaccionSchema = new Schema({
     enum: [
       'WAREHOUSE_RECEIPT',  // Products arrive at warehouse
       'CONSIGNMENT_OUT',    // Send to hospital on consignment
+      'CONSIGNMENT',        // Bulk consignment from warehouse to centro
       'CONSUMPTION',        // Hospital uses products
       'RETURN',             // Hospital returns products
       'ADJUSTMENT',         // Damaged, expired, or corrections

@@ -192,7 +192,7 @@ exports.create = async (req, res, next) => {
 
     await consignacion.save();
 
-    // Deduct stock from warehouse (FIFO)
+    // Deduct stock from warehouse and create in-transit inventory at centro (FIFO)
     for (const item of items) {
       let remaining = item.quantitySent;
       const availableLotes = await Lotes.find({
@@ -206,10 +206,65 @@ exports.create = async (req, res, next) => {
 
         const toDeduct = Math.min(remaining, lote.quantityAvailable);
 
-        // Update lote
+        // Update warehouse lote: reduce available, increase consigned
         lote.quantityAvailable -= toDeduct;
         lote.quantityConsigned += toDeduct;
         await lote.save();
+
+        // Create or update centro lote with "in transit" status (quantityConsigned)
+        let centroLote = await Lotes.findOne({
+          productId: item.productId,
+          lotNumber: lote.lotNumber,
+          currentLocationId: toLocationId,
+        });
+
+        if (centroLote) {
+          // Update existing centro lote: increase total and consigned
+          centroLote.quantityTotal += toDeduct;
+          centroLote.quantityConsigned += toDeduct;
+
+          // Add to historia (ensure array exists)
+          if (!centroLote.historia) centroLote.historia = [];
+          centroLote.historia.push({
+            fecha: new Date(),
+            tipo: 'CONSIGNMENT_SENT',
+            cantidad: toDeduct,
+            usuario: `${req.user.firstname} ${req.user.lastname}`,
+            detalles: `In transit from ${fromLocation.name} - Consignment #${consignacion._id}`,
+          });
+
+          await centroLote.save();
+        } else {
+          // Create new lote at centro with consigned status (in transit)
+          centroLote = new Lotes({
+            productId: item.productId,
+            lotNumber: lote.lotNumber,
+            expiryDate: lote.expiryDate,
+            manufactureDate: lote.manufactureDate,
+            quantityTotal: toDeduct,
+            quantityAvailable: 0, // Not available yet - in transit
+            quantityConsigned: toDeduct, // Shows as "in transit"
+            quantityConsumed: 0,
+            currentLocationId: toLocationId,
+            status: 'ACTIVE',
+            receivedDate: new Date(),
+            supplier: lote.supplier,
+            unitCost: lote.unitCost,
+            createdBy: {
+              _id: req.user._id,
+              firstname: req.user.firstname,
+              lastname: req.user.lastname,
+            },
+            historia: [{
+              fecha: new Date(),
+              tipo: 'CONSIGNMENT_SENT',
+              cantidad: toDeduct,
+              usuario: `${req.user.firstname} ${req.user.lastname}`,
+              detalles: `In transit from ${fromLocation.name} - Consignment #${consignacion._id}`,
+            }],
+          });
+          await centroLote.save();
+        }
 
         // Create transaction record
         const transaccion = new Transacciones({
@@ -237,6 +292,9 @@ exports.create = async (req, res, next) => {
 
       // Update warehouse inventory
       await updateInventario(req.companyId, item.productId, fromLocationId);
+
+      // Update centro inventory to show in-transit stock
+      await updateInventario(req.companyId, item.productId, toLocationId);
     }
 
     res.status(201).json({
@@ -289,6 +347,13 @@ exports.confirm = async (req, res, next) => {
       const quantityReceived = receivedItem.quantityReceived;
       const quantitySent = consignacionItem.quantitySent;
 
+      // Validate quantity received
+      if (quantityReceived < 0) {
+        return res.status(400).json({
+          error: `Quantity received cannot be negative for product ${receivedItem.productId}`,
+        });
+      }
+
       if (quantityReceived > quantitySent) {
         return res.status(400).json({
           error: `Cannot receive more than sent for product ${receivedItem.productId}`,
@@ -299,98 +364,181 @@ exports.confirm = async (req, res, next) => {
       consignacionItem.quantityReceived = quantityReceived;
       consignacionItem.notes = receivedItem.notes || consignacionItem.notes;
 
-      // If received quantity > 0, add to centro inventory
-      if (quantityReceived > 0) {
-        // Find the lotes that were consigned (FIFO from transactions)
-        const consignmentTransactions = await Transacciones.find({
-          type: 'CONSIGNMENT',
-          productId: receivedItem.productId,
-          fromLocationId: consignacion.fromLocationId,
-          toLocationId: consignacion.toLocationId,
-          notes: { $regex: `Consignment #${consignacion._id}` },
-        }).sort({ createdAt: 1 });
+      // Find the consignment transactions for this product (FIFO)
+      const consignmentTransactions = await Transacciones.find({
+        type: 'CONSIGNMENT',
+        productId: receivedItem.productId,
+        fromLocationId: consignacion.fromLocationId,
+        toLocationId: consignacion.toLocationId,
+        notes: { $regex: `Consignment #${consignacion._id}` },
+      }).sort({ createdAt: 1 });
 
+      // Track how much of each transaction has been processed
+      const transactionUsage = new Map();
+
+      // If received quantity > 0, convert in-transit to available at centro
+      if (quantityReceived > 0) {
         let remainingToReceive = quantityReceived;
 
         for (const transaction of consignmentTransactions) {
           if (remainingToReceive <= 0) break;
 
           const toReceive = Math.min(remainingToReceive, transaction.quantity);
+          transactionUsage.set(transaction._id.toString(), toReceive);
 
-          // Find the original lote
-          const originalLote = await Lotes.findById(transaction.lotId);
+          // Find the warehouse lote to get lot number
+          const warehouseLote = await Lotes.findById(transaction.lotId);
 
-          if (originalLote) {
-            // Update original lote: reduce consigned, it's now at centro
-            originalLote.quantityConsigned -= toReceive;
-            originalLote.currentLocationId = consignacion.toLocationId;
-            originalLote.quantityAvailable += toReceive;
-            await originalLote.save();
+          if (warehouseLote) {
+            // Reduce consigned and total at warehouse (stock now belongs to centro)
+            warehouseLote.quantityConsigned -= toReceive;
+            warehouseLote.quantityTotal -= toReceive;
+            await warehouseLote.save();
+
+            // Find and update the centro lote (should already exist from creation)
+            const centroLote = await Lotes.findOne({
+              productId: receivedItem.productId,
+              lotNumber: warehouseLote.lotNumber,
+              currentLocationId: consignacion.toLocationId,
+            });
+
+            if (centroLote) {
+              // Convert consigned to available (in-transit → received)
+              centroLote.quantityConsigned -= toReceive;
+              centroLote.quantityAvailable += toReceive;
+
+              // Add to historia (ensure array exists)
+              if (!centroLote.historia) centroLote.historia = [];
+              centroLote.historia.push({
+                fecha: new Date(),
+                tipo: 'CONSIGNMENT_RECEIPT',
+                cantidad: toReceive,
+                usuario: `${req.user.firstname} ${req.user.lastname}`,
+                detalles: `Receipt confirmed - Consignment #${consignacion._id}`,
+              });
+
+              await centroLote.save();
+            } else {
+              // Fallback: Create new lote if not found (shouldn't happen normally)
+              console.warn(`Centro lote not found for ${warehouseLote.lotNumber}, creating new one`);
+              const newCentroLote = new Lotes({
+                productId: receivedItem.productId,
+                lotNumber: warehouseLote.lotNumber,
+                expiryDate: warehouseLote.expiryDate,
+                manufactureDate: warehouseLote.manufactureDate,
+                quantityTotal: toReceive,
+                quantityAvailable: toReceive,
+                quantityConsigned: 0,
+                quantityConsumed: 0,
+                currentLocationId: consignacion.toLocationId,
+                status: 'ACTIVE',
+                receivedDate: new Date(),
+                supplier: warehouseLote.supplier,
+                unitCost: warehouseLote.unitCost,
+                createdBy: {
+                  _id: req.user._id,
+                  firstname: req.user.firstname,
+                  lastname: req.user.lastname,
+                },
+                historia: [{
+                  fecha: new Date(),
+                  tipo: 'CONSIGNMENT_RECEIPT',
+                  cantidad: toReceive,
+                  usuario: `${req.user.firstname} ${req.user.lastname}`,
+                  detalles: `Received from warehouse - Consignment #${consignacion._id}`,
+                }],
+              });
+              await newCentroLote.save();
+            }
           }
 
           remainingToReceive -= toReceive;
         }
 
-        // Update centro inventory
+        // Update centro inventory (convert consigned to available)
         await updateInventario(req.companyId, receivedItem.productId, consignacion.toLocationId);
       }
 
       // If partial receipt, return difference to warehouse
       const difference = quantitySent - quantityReceived;
       if (difference > 0) {
-        // Find consigned lotes and return to warehouse
-        const consignmentTransactions = await Transacciones.find({
-          type: 'CONSIGNMENT',
-          productId: receivedItem.productId,
-          fromLocationId: consignacion.fromLocationId,
-          toLocationId: consignacion.toLocationId,
-          notes: { $regex: `Consignment #${consignacion._id}` },
-        }).sort({ createdAt: 1 });
-
         let remainingToReturn = difference;
 
         for (const transaction of consignmentTransactions) {
           if (remainingToReturn <= 0) break;
 
-          const toReturn = Math.min(remainingToReturn, transaction.quantity);
+          // Calculate how much of this transaction to return
+          // (transaction.quantity minus what was already received)
+          const alreadyReceived = transactionUsage.get(transaction._id.toString()) || 0;
+          const availableToReturn = transaction.quantity - alreadyReceived;
+          const toReturn = Math.min(remainingToReturn, availableToReturn);
 
-          // Find the original lote
-          const originalLote = await Lotes.findById(transaction.lotId);
+          if (toReturn > 0) {
+            // Find the warehouse lote
+            const warehouseLote = await Lotes.findById(transaction.lotId);
 
-          if (originalLote) {
-            // Return to warehouse
-            originalLote.quantityConsigned -= toReturn;
-            originalLote.quantityAvailable += toReturn;
-            await originalLote.save();
+            if (warehouseLote) {
+              // Return to warehouse (reduce consigned, increase available)
+              warehouseLote.quantityConsigned -= toReturn;
+              warehouseLote.quantityAvailable += toReturn;
+              await warehouseLote.save();
 
-            // Create return transaction
-            const returnTransaction = new Transacciones({
-              type: 'RETURN',
-              productId: receivedItem.productId,
-              lotId: originalLote._id,
-              lotNumber: originalLote.lotNumber,
-              fromLocationId: consignacion.toLocationId,
-              toLocationId: consignacion.fromLocationId,
-              quantity: toReturn,
-              notes: `Partial receipt return - Consignment #${consignacion._id}`,
-              performedBy: {
-                _id: req.user._id,
-                firstname: req.user.firstname,
-                lastname: req.user.lastname,
-                email: req.user.email,
-              },
-              status: 'COMPLETED',
-            });
+              // Remove from centro in-transit (reduce both total and consigned)
+              const centroLote = await Lotes.findOne({
+                productId: receivedItem.productId,
+                lotNumber: warehouseLote.lotNumber,
+                currentLocationId: consignacion.toLocationId,
+              });
 
-            await returnTransaction.save();
+              if (centroLote) {
+                centroLote.quantityTotal -= toReturn;
+                centroLote.quantityConsigned -= toReturn;
+
+                // Add to historia (ensure array exists)
+                if (!centroLote.historia) centroLote.historia = [];
+                centroLote.historia.push({
+                  fecha: new Date(),
+                  tipo: 'PARTIAL_RETURN',
+                  cantidad: -toReturn,
+                  usuario: `${req.user.firstname} ${req.user.lastname}`,
+                  detalles: `Partial receipt - returned to warehouse - Consignment #${consignacion._id}`,
+                });
+
+                await centroLote.save();
+              }
+
+              // Create return transaction
+              const returnTransaction = new Transacciones({
+                type: 'RETURN',
+                productId: receivedItem.productId,
+                lotId: warehouseLote._id,
+                lotNumber: warehouseLote.lotNumber,
+                fromLocationId: consignacion.toLocationId,
+                toLocationId: consignacion.fromLocationId,
+                quantity: toReturn,
+                notes: `Partial receipt return - Consignment #${consignacion._id}`,
+                performedBy: {
+                  _id: req.user._id,
+                  firstname: req.user.firstname,
+                  lastname: req.user.lastname,
+                  email: req.user.email,
+                },
+                status: 'COMPLETED',
+              });
+
+              await returnTransaction.save();
+            }
+
+            remainingToReturn -= toReturn;
           }
-
-          remainingToReturn -= toReturn;
         }
 
-        // Update warehouse inventory
-        await updateInventario(req.companyId, receivedItem.productId, consignacion.fromLocationId);
+        // Update centro inventory to reflect returned items
+        await updateInventario(req.companyId, receivedItem.productId, consignacion.toLocationId);
       }
+
+      // Update warehouse inventory (handles both receive and return updates)
+      await updateInventario(req.companyId, receivedItem.productId, consignacion.fromLocationId);
     }
 
     // Update consignment status

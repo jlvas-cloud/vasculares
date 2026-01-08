@@ -491,13 +491,14 @@ exports.getPlanningData = async (req, res, next) => {
     let warehouseStockLevels = {}; // For location view, track warehouse stock separately
 
     if (isLocationView) {
-      // Stock at specific location
+      // Stock at specific location (including in-transit)
       stockLevels = await Inventario.aggregate([
         { $match: { locationId: new mongoose.Types.ObjectId(locationId) } },
         {
           $group: {
             _id: '$productId',
             locationStock: { $sum: '$quantityAvailable' },
+            inTransit: { $sum: '$quantityConsigned' }, // Stock sent but not yet confirmed
           },
         },
       ]);
@@ -546,6 +547,15 @@ exports.getPlanningData = async (req, res, next) => {
                 $cond: [
                   { $eq: ['$location.type', 'WAREHOUSE'] },
                   '$quantityAvailable',
+                  0,
+                ],
+              },
+            },
+            warehouseInTransit: {
+              $sum: {
+                $cond: [
+                  { $eq: ['$location.type', 'WAREHOUSE'] },
+                  '$quantityConsigned', // Stock sent out from warehouse, not yet confirmed
                   0,
                 ],
               },
@@ -722,15 +732,18 @@ exports.getPlanningData = async (req, res, next) => {
 
       if (isLocationView) {
         // Location-specific view
-        const stock = stockMap[product._id.toString()] || { locationStock: 0 };
+        const stock = stockMap[product._id.toString()] || { locationStock: 0, inTransit: 0 };
         const locationTarget = locationTargets[product._id.toString()];
         const warehouseStock = warehouseStockLevels[product._id.toString()] || 0;
 
         const currentStock = stock.locationStock;
+        const inTransit = stock.inTransit || 0; // Stock sent to this location but not yet confirmed
         const targetStock = locationTarget?.targetStock || 0;
 
-        // Calculate suggested consignment = Stock Objetivo - Stock Actual
-        const suggestedConsignment = Math.max(0, targetStock - currentStock);
+        // Calculate suggested consignment = Stock Objetivo - (Stock Actual + En Tránsito)
+        // Don't suggest more if stock is already on the way
+        const effectiveStock = currentStock + inTransit;
+        const suggestedConsignment = Math.max(0, targetStock - effectiveStock);
 
         // Calculate coverage days
         const daysOfCoverage =
@@ -741,6 +754,7 @@ exports.getPlanningData = async (req, res, next) => {
         result = {
           ...result,
           currentStock,
+          inTransit, // Stock in transit to this location
           warehouseStock, // Available in warehouse for consignment
           targetStock,
           suggestedConsignment,
@@ -752,10 +766,12 @@ exports.getPlanningData = async (req, res, next) => {
         // Warehouse view - Option 1: System-wide calculation
         const stock = stockMap[product._id.toString()] || {
           warehouseStock: 0,
+          warehouseInTransit: 0,
           consignedStock: 0,
           totalStock: 0,
         };
 
+        const warehouseInTransit = stock.warehouseInTransit || 0; // Stock sent from warehouse, not yet confirmed
         const settings = product.inventorySettings || {};
         const warehouseTarget = settings.targetStockWarehouse || 0;
 
@@ -794,6 +810,7 @@ exports.getPlanningData = async (req, res, next) => {
         result = {
           ...result,
           warehouseStock: stock.warehouseStock,
+          warehouseInTransit, // Stock sent from warehouse, awaiting confirmation
           consignedStock: stock.consignedStock,
           totalStock: stock.totalStock,
           targetStock: warehouseTarget, // Show warehouse target in column
