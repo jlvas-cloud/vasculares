@@ -598,6 +598,15 @@ exports.getPlanningData = async (req, res, next) => {
         avgMonthlyConsumption: Math.round(consumption.avgMonthlyConsumption * 100) / 100,
       };
 
+      // Helper to calculate status based on percentage of target
+      const calculateStatus = (current, target) => {
+        if (target === 0) return 'sin_configurar';
+        const percentage = (current / target) * 100;
+        if (percentage < 50) return 'critical';
+        if (percentage < 75) return 'warning';
+        return 'ok';
+      };
+
       if (isLocationView) {
         // Location-specific view
         const stock = stockMap[product._id.toString()] || { locationStock: 0 };
@@ -605,19 +614,9 @@ exports.getPlanningData = async (req, res, next) => {
 
         const currentStock = stock.locationStock;
         const targetStock = locationTarget?.targetStock || 0;
-        const reorderPoint = locationTarget?.reorderPoint || 0;
-        const minStock = locationTarget?.minStockLevel || 0;
 
-        // Calculate suggested consignment (not order)
+        // Calculate suggested consignment = Stock Objetivo - Stock Actual
         const suggestedConsignment = Math.max(0, targetStock - currentStock);
-
-        // Determine status
-        let status = 'ok';
-        if (currentStock < minStock) {
-          status = 'critical';
-        } else if (currentStock <= reorderPoint) {
-          status = 'warning';
-        }
 
         // Calculate coverage days
         const daysOfCoverage =
@@ -629,11 +628,9 @@ exports.getPlanningData = async (req, res, next) => {
           ...result,
           currentStock,
           targetStock,
-          reorderPoint,
-          minStock,
           suggestedConsignment,
           daysOfCoverage,
-          status,
+          status: calculateStatus(currentStock, targetStock),
           hasTarget: !!locationTarget,
         };
       } else {
@@ -646,20 +643,9 @@ exports.getPlanningData = async (req, res, next) => {
 
         const settings = product.inventorySettings || {};
         const targetStock = settings.targetStockWarehouse || 0;
-        const reorderPoint = settings.reorderPoint || 0;
-        const minStock = settings.minStockLevel || 0;
-        const maxStock = settings.maxStockLevel || 0;
 
-        // Calculate suggested order quantity
+        // Calculate suggested order = Stock Objetivo - Stock Actual
         const suggestedOrder = Math.max(0, targetStock - stock.warehouseStock);
-
-        // Determine status
-        let status = 'ok';
-        if (stock.warehouseStock < minStock) {
-          status = 'critical';
-        } else if (stock.warehouseStock <= reorderPoint) {
-          status = 'warning';
-        }
 
         // Calculate coverage days
         const daysOfCoverage =
@@ -673,12 +659,9 @@ exports.getPlanningData = async (req, res, next) => {
           consignedStock: stock.consignedStock,
           totalStock: stock.totalStock,
           targetStock,
-          reorderPoint,
-          minStock,
-          maxStock,
           suggestedOrder,
           daysOfCoverage,
-          status,
+          status: calculateStatus(stock.warehouseStock, targetStock),
         };
       }
 

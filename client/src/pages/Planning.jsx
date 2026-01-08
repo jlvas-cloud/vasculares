@@ -76,15 +76,13 @@ export default function Planning() {
   const handleSaveEdit = (e) => {
     e.preventDefault();
     const formData = new FormData(e.target);
+    const targetStock = parseInt(formData.get('targetStock')) || 0;
 
     if (isWarehouseView) {
       // Update product inventory settings
       const data = {
         inventorySettings: {
-          targetStockWarehouse: parseInt(formData.get('targetStock')) || 0,
-          reorderPoint: parseInt(formData.get('reorderPoint')) || 0,
-          minStockLevel: parseInt(formData.get('minStock')) || 0,
-          maxStockLevel: parseInt(formData.get('maxStock')) || 0,
+          targetStockWarehouse: targetStock,
         },
       };
       updateProductMutation.mutate({ productId: editingProduct.productId, data });
@@ -93,9 +91,7 @@ export default function Planning() {
       const data = {
         productId: editingProduct.productId,
         locationId: location,
-        targetStock: parseInt(formData.get('targetStock')) || 0,
-        reorderPoint: parseInt(formData.get('reorderPoint')) || 0,
-        minStockLevel: parseInt(formData.get('minStock')) || 0,
+        targetStock,
       };
       upsertTargetMutation.mutate(data);
     }
@@ -109,8 +105,25 @@ export default function Planning() {
         return 'bg-yellow-100 text-yellow-800';
       case 'ok':
         return 'bg-green-100 text-green-800';
+      case 'sin_configurar':
+        return 'bg-blue-100 text-blue-800';
       default:
         return 'bg-gray-100 text-gray-800';
+    }
+  };
+
+  const getStatusLabel = (status) => {
+    switch (status) {
+      case 'critical':
+        return 'Crítico';
+      case 'warning':
+        return 'Atención';
+      case 'ok':
+        return 'OK';
+      case 'sin_configurar':
+        return 'Sin Config.';
+      default:
+        return status;
     }
   };
 
@@ -122,6 +135,8 @@ export default function Planning() {
         return <TrendingUp className="h-4 w-4" />;
       case 'ok':
         return <CheckCircle2 className="h-4 w-4" />;
+      case 'sin_configurar':
+        return <Edit className="h-4 w-4" />;
       default:
         return null;
     }
@@ -286,10 +301,9 @@ export default function Planning() {
                   ) : (
                     <th className="text-right p-2 font-medium">Stock Actual</th>
                   )}
-                  <th className="text-right p-2 font-medium">Consumo Mensual Prom.</th>
+                  <th className="text-right p-2 font-medium">Consumo Mensual</th>
                   <th className="text-right p-2 font-medium">Días Cobertura</th>
                   <th className="text-right p-2 font-medium">Stock Objetivo</th>
-                  <th className="text-right p-2 font-medium">Punto Reorden</th>
                   <th className="text-right p-2 font-medium">
                     {isWarehouseView ? 'Sugerido Ordenar' : 'Sugerido Consignar'}
                   </th>
@@ -323,10 +337,12 @@ export default function Planning() {
                             <td className="p-2 text-right">
                               <span
                                 className={`font-medium ${
-                                  currentStock < product.minStock
+                                  product.status === 'critical'
                                     ? 'text-red-600'
-                                    : currentStock <= product.reorderPoint
+                                    : product.status === 'warning'
                                     ? 'text-yellow-600'
+                                    : product.status === 'sin_configurar'
+                                    ? 'text-blue-600'
                                     : 'text-green-600'
                                 }`}
                               >
@@ -341,10 +357,12 @@ export default function Planning() {
                           <td className="p-2 text-right">
                             <span
                               className={`font-medium ${
-                                currentStock < product.minStock
+                                product.status === 'critical'
                                   ? 'text-red-600'
-                                  : currentStock <= product.reorderPoint
+                                  : product.status === 'warning'
                                   ? 'text-yellow-600'
+                                  : product.status === 'sin_configurar'
+                                  ? 'text-blue-600'
                                   : 'text-green-600'
                               }`}
                             >
@@ -376,9 +394,6 @@ export default function Planning() {
                         </td>
                         <td className="p-2 text-right text-muted-foreground">
                           {product.targetStock || '-'}
-                        </td>
-                        <td className="p-2 text-right text-muted-foreground">
-                          {product.reorderPoint || '-'}
                         </td>
                         <td className="p-2 text-right">
                           {suggested > 0 ? (
@@ -412,7 +427,7 @@ export default function Planning() {
                   })
                 ) : (
                   <tr>
-                    <td colSpan="11" className="p-8 text-center text-muted-foreground">
+                    <td colSpan="10" className="p-8 text-center text-muted-foreground">
                       No hay productos disponibles
                     </td>
                   </tr>
@@ -440,7 +455,7 @@ export default function Planning() {
               </DialogHeader>
               <div className="grid gap-4 py-4">
                 <div className="grid gap-2">
-                  <Label htmlFor="targetStock">Stock Objetivo *</Label>
+                  <Label htmlFor="targetStock">Stock Objetivo</Label>
                   <Input
                     id="targetStock"
                     name="targetStock"
@@ -450,52 +465,23 @@ export default function Planning() {
                     required
                   />
                   <p className="text-xs text-muted-foreground">
-                    Cantidad ideal a mantener
+                    Cantidad ideal a mantener. El sugerido a {isWarehouseView ? 'ordenar' : 'consignar'} se calcula como: Stock Objetivo - Stock Actual
                   </p>
                 </div>
-                <div className="grid gap-2">
-                  <Label htmlFor="reorderPoint">Punto de Reorden *</Label>
-                  <Input
-                    id="reorderPoint"
-                    name="reorderPoint"
-                    type="number"
-                    min="0"
-                    defaultValue={editingProduct.reorderPoint || 0}
-                    required
-                  />
-                  <p className="text-xs text-muted-foreground">
-                    {isWarehouseView
-                      ? 'Disparar orden cuando baje de este nivel'
-                      : 'Disparar consignación cuando baje de este nivel'}
-                  </p>
-                </div>
-                <div className="grid gap-2">
-                  <Label htmlFor="minStock">Stock Mínimo *</Label>
-                  <Input
-                    id="minStock"
-                    name="minStock"
-                    type="number"
-                    min="0"
-                    defaultValue={editingProduct.minStock || 0}
-                    required
-                  />
-                  <p className="text-xs text-muted-foreground">Stock de seguridad</p>
-                </div>
-                {isWarehouseView && (
-                  <div className="grid gap-2">
-                    <Label htmlFor="maxStock">Stock Máximo</Label>
-                    <Input
-                      id="maxStock"
-                      name="maxStock"
-                      type="number"
-                      min="0"
-                      defaultValue={editingProduct.maxStock || 0}
-                    />
-                    <p className="text-xs text-muted-foreground">
-                      Evitar sobre-stock
-                    </p>
+                <div className="bg-muted/50 p-3 rounded-md text-sm">
+                  <div className="flex justify-between mb-1">
+                    <span className="text-muted-foreground">Stock Actual:</span>
+                    <span className="font-medium">
+                      {isWarehouseView ? editingProduct.warehouseStock : editingProduct.currentStock}
+                    </span>
                   </div>
-                )}
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">{isWarehouseView ? 'Sugerido Ordenar:' : 'Sugerido Consignar:'}</span>
+                    <span className="font-medium text-blue-600">
+                      {isWarehouseView ? editingProduct.suggestedOrder : editingProduct.suggestedConsignment}
+                    </span>
+                  </div>
+                </div>
               </div>
               <DialogFooter>
                 <Button

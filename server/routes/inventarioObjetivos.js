@@ -15,16 +15,12 @@ router.use(verifyUser, getCompanyId);
 const validateUpsert = [
   body('productId').notEmpty().withMessage('Product ID is required'),
   body('locationId').notEmpty().withMessage('Location ID is required'),
-  body('targetStock').optional().isInt({ min: 0 }).withMessage('Target stock must be a non-negative integer'),
-  body('reorderPoint').optional().isInt({ min: 0 }).withMessage('Reorder point must be a non-negative integer'),
-  body('minStockLevel').optional().isInt({ min: 0 }).withMessage('Min stock level must be a non-negative integer'),
+  body('targetStock').optional().isInt({ min: 0 }).withMessage('Stock objetivo must be a non-negative integer'),
 ];
 
 // Validation rules for update
 const validateUpdate = [
-  body('targetStock').optional().isInt({ min: 0 }).withMessage('Target stock must be a non-negative integer'),
-  body('reorderPoint').optional().isInt({ min: 0 }).withMessage('Reorder point must be a non-negative integer'),
-  body('minStockLevel').optional().isInt({ min: 0 }).withMessage('Min stock level must be a non-negative integer'),
+  body('targetStock').optional().isInt({ min: 0 }).withMessage('Stock objetivo must be a non-negative integer'),
 ];
 
 // Routes

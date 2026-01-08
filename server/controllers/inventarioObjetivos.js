@@ -81,8 +81,6 @@ exports.upsert = async (req, res, next) => {
       productId,
       locationId,
       targetStock,
-      reorderPoint,
-      minStockLevel,
       notes,
     } = req.body;
 
@@ -92,8 +90,6 @@ exports.upsert = async (req, res, next) => {
     if (objetivo) {
       // Update existing
       objetivo.targetStock = targetStock !== undefined ? targetStock : objetivo.targetStock;
-      objetivo.reorderPoint = reorderPoint !== undefined ? reorderPoint : objetivo.reorderPoint;
-      objetivo.minStockLevel = minStockLevel !== undefined ? minStockLevel : objetivo.minStockLevel;
       objetivo.notes = notes !== undefined ? notes : objetivo.notes;
       objetivo.updatedBy = {
         _id: req.user._id,
@@ -113,8 +109,6 @@ exports.upsert = async (req, res, next) => {
         productId,
         locationId,
         targetStock: targetStock || 0,
-        reorderPoint: reorderPoint || 0,
-        minStockLevel: minStockLevel || 0,
         notes,
         createdBy: {
           _id: req.user._id,
@@ -152,8 +146,6 @@ exports.update = async (req, res, next) => {
 
     const {
       targetStock,
-      reorderPoint,
-      minStockLevel,
       notes,
       active,
     } = req.body;
@@ -166,8 +158,6 @@ exports.update = async (req, res, next) => {
 
     // Update fields
     if (targetStock !== undefined) objetivo.targetStock = targetStock;
-    if (reorderPoint !== undefined) objetivo.reorderPoint = reorderPoint;
-    if (minStockLevel !== undefined) objetivo.minStockLevel = minStockLevel;
     if (notes !== undefined) objetivo.notes = notes;
     if (active !== undefined) objetivo.active = active;
 

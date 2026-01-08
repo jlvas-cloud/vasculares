@@ -49,25 +49,7 @@ const productoSchema = new Schema({
       type: Number,
       default: 0,
       min: 0,
-      description: 'Ideal quantity to maintain in central warehouse',
-    },
-    reorderPoint: {
-      type: Number,
-      default: 0,
-      min: 0,
-      description: 'Trigger reorder when stock falls below this level',
-    },
-    minStockLevel: {
-      type: Number,
-      default: 0,
-      min: 0,
-      description: 'Minimum safety stock level',
-    },
-    maxStockLevel: {
-      type: Number,
-      default: 0,
-      min: 0,
-      description: 'Maximum stock level to avoid overstocking',
+      description: 'Stock Objetivo - ideal quantity to maintain in central warehouse',
     },
   },
   active: {

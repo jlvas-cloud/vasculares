@@ -17,43 +17,12 @@ const inventarioObjetivosSchema = new Schema({
     required: true,
   },
 
-  // Target inventory levels for this product at this location
+  // Stock Objetivo for this product at this location
   targetStock: {
     type: Number,
     default: 0,
     min: 0,
-    description: 'Target quantity to maintain at this location',
-  },
-  reorderPoint: {
-    type: Number,
-    default: 0,
-    min: 0,
-    description: 'Trigger consignment when stock falls below this level',
-  },
-  minStockLevel: {
-    type: Number,
-    default: 0,
-    min: 0,
-    description: 'Minimum safety stock for this location',
-  },
-
-  // Auto-calculated metrics (updated periodically)
-  avgMonthlyConsumption: {
-    type: Number,
-    default: 0,
-    min: 0,
-    description: 'Average monthly consumption at this location (auto-calculated)',
-  },
-  lastCalculated: {
-    type: Date,
-    description: 'When avgMonthlyConsumption was last calculated',
-  },
-
-  // Coverage metrics
-  daysOfCoverage: {
-    type: Number,
-    default: 0,
-    description: 'Estimated days of stock remaining based on avg consumption',
+    description: 'Stock Objetivo - ideal quantity to maintain at this location',
   },
 
   // Metadata
