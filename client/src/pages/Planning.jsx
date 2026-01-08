@@ -142,19 +142,6 @@ export default function Planning() {
     }
   };
 
-  const getStatusLabel = (status) => {
-    switch (status) {
-      case 'critical':
-        return 'Crítico';
-      case 'warning':
-        return 'Advertencia';
-      case 'ok':
-        return 'OK';
-      default:
-        return 'N/A';
-    }
-  };
-
   // Calculate summary stats
   const stats = planningData
     ? {
