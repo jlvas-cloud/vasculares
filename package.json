@@ -1,0 +1,29 @@
+{
+  "name": "vasculares",
+  "version": "1.0.0",
+  "description": "Sistema de Gestión de Inventario en Consignación - Productos Vasculares",
+  "private": true,
+  "engines": {
+    "node": "18.x"
+  },
+  "scripts": {
+    "start": "node server/bin/www",
+    "dev:server": "cd server && npm run dev",
+    "dev:client": "cd client && npm run dev",
+    "build": "cd client && npm ci && npm run build",
+    "heroku-postbuild": "cd server && npm ci && cd ../client && npm ci && npm run build",
+    "install:all": "cd server && npm install && cd ../client && npm install"
+  },
+  "dependencies": {},
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/jlvas-cloud/vasculares.git"
+  },
+  "keywords": [
+    "inventory",
+    "medical",
+    "consignment",
+    "vascular-products"
+  ],
+  "author": "Hospalmedica"
+}
