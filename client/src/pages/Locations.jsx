@@ -7,15 +7,18 @@ import { Label } from '../components/ui/label';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../components/ui/card';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from '../components/ui/dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select';
-import { Plus, MapPin, Building } from 'lucide-react';
+import { Plus, MapPin, Building, Edit } from 'lucide-react';
 import { useToast } from '../components/ui/toast';
 
 export default function Locations() {
   const [open, setOpen] = useState(false);
+  const [editingLocation, setEditingLocation] = useState(null);
   const [selectedType, setSelectedType] = useState('');
   const formRef = useRef(null);
   const queryClient = useQueryClient();
   const toast = useToast();
+
+  const isEditing = !!editingLocation;
 
   const { data: locations, isLoading } = useQuery({
     queryKey: ['locaciones'],
@@ -31,9 +34,7 @@ export default function Locations() {
     mutationFn: locacionesApi.create,
     onSuccess: () => {
       queryClient.invalidateQueries(['locaciones']);
-      formRef.current?.reset();
-      setSelectedType('');
-      setOpen(false);
+      handleCloseDialog();
       toast.success('Locación creada exitosamente');
     },
     onError: (error) => {
@@ -41,12 +42,37 @@ export default function Locations() {
     },
   });
 
+  const updateMutation = useMutation({
+    mutationFn: ({ id, data }) => locacionesApi.update(id, data),
+    onSuccess: () => {
+      queryClient.invalidateQueries(['locaciones']);
+      handleCloseDialog();
+      toast.success('Locación actualizada exitosamente');
+    },
+    onError: (error) => {
+      toast.error(error.response?.data?.error || 'Error al actualizar locación');
+    },
+  });
+
+  const handleCloseDialog = () => {
+    setOpen(false);
+    setEditingLocation(null);
+    setSelectedType('');
+    formRef.current?.reset();
+  };
+
   const handleDialogChange = (isOpen) => {
-    setOpen(isOpen);
     if (!isOpen) {
-      formRef.current?.reset();
-      setSelectedType('');
+      handleCloseDialog();
+    } else {
+      setOpen(true);
     }
+  };
+
+  const handleEdit = (location) => {
+    setEditingLocation(location);
+    setSelectedType(location.type);
+    setOpen(true);
   };
 
   const handleSubmit = (e) => {
@@ -68,7 +94,12 @@ export default function Locations() {
         email: formData.get('contactEmail'),
       },
     };
-    createMutation.mutate(data);
+
+    if (isEditing) {
+      updateMutation.mutate({ id: editingLocation._id, data });
+    } else {
+      createMutation.mutate(data);
+    }
   };
 
   if (isLoading) return <div>Cargando...</div>;
@@ -78,7 +109,7 @@ export default function Locations() {
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-3xl font-bold">Locaciones</h1>
-          <p className="text-muted-foreground">Hospitales y almacenes</p>
+          <p className="text-muted-foreground">Centros y almacenes</p>
         </div>
         <Dialog open={open} onOpenChange={handleDialogChange}>
           <DialogTrigger asChild>
@@ -90,17 +121,30 @@ export default function Locations() {
           <DialogContent>
             <form ref={formRef} onSubmit={handleSubmit}>
               <DialogHeader>
-                <DialogTitle>Crear Locación</DialogTitle>
-                <DialogDescription>Agregar un nuevo hospital o almacén</DialogDescription>
+                <DialogTitle>{isEditing ? 'Editar Locación' : 'Crear Locación'}</DialogTitle>
+                <DialogDescription>
+                  {isEditing ? 'Modificar información de la locación' : 'Agregar un nuevo centro o almacén'}
+                </DialogDescription>
               </DialogHeader>
               <div className="grid gap-4 py-4">
                 <div className="grid gap-2">
                   <Label htmlFor="name">Nombre Corto *</Label>
-                  <Input id="name" name="name" placeholder="CDC" required />
+                  <Input
+                    id="name"
+                    name="name"
+                    placeholder="CDC"
+                    defaultValue={editingLocation?.name || ''}
+                    required
+                  />
                 </div>
                 <div className="grid gap-2">
                   <Label htmlFor="fullName">Nombre Completo</Label>
-                  <Input id="fullName" name="fullName" placeholder="Corazones del Cibao" />
+                  <Input
+                    id="fullName"
+                    name="fullName"
+                    placeholder="Corazones del Cibao"
+                    defaultValue={editingLocation?.fullName || ''}
+                  />
                 </div>
                 <div className="grid gap-2">
                   <Label htmlFor="type">Tipo *</Label>
@@ -119,14 +163,34 @@ export default function Locations() {
                 </div>
                 <div className="grid gap-2">
                   <Label>Contacto</Label>
-                  <Input name="contactName" placeholder="Nombre del contacto" />
-                  <Input name="contactPhone" placeholder="Teléfono" />
-                  <Input name="contactEmail" type="email" placeholder="Email" />
+                  <Input
+                    name="contactName"
+                    placeholder="Nombre del contacto"
+                    defaultValue={editingLocation?.contact?.name || ''}
+                  />
+                  <Input
+                    name="contactPhone"
+                    placeholder="Teléfono"
+                    defaultValue={editingLocation?.contact?.phone || ''}
+                  />
+                  <Input
+                    name="contactEmail"
+                    type="email"
+                    placeholder="Email"
+                    defaultValue={editingLocation?.contact?.email || ''}
+                  />
                 </div>
               </div>
               <DialogFooter>
-                <Button type="submit" disabled={createMutation.isPending}>
-                  {createMutation.isPending ? 'Creando...' : 'Crear Locación'}
+                <Button type="button" variant="outline" onClick={handleCloseDialog}>
+                  Cancelar
+                </Button>
+                <Button type="submit" disabled={createMutation.isPending || updateMutation.isPending}>
+                  {createMutation.isPending || updateMutation.isPending
+                    ? 'Guardando...'
+                    : isEditing
+                    ? 'Guardar Cambios'
+                    : 'Crear Locación'}
                 </Button>
               </DialogFooter>
             </form>
@@ -150,6 +214,9 @@ export default function Locations() {
                     <CardDescription>{location.fullName || location.name}</CardDescription>
                   </div>
                 </div>
+                <Button variant="ghost" size="sm" onClick={() => handleEdit(location)}>
+                  <Edit className="h-4 w-4" />
+                </Button>
               </div>
             </CardHeader>
             <CardContent>

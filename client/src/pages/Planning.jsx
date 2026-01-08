@@ -232,11 +232,21 @@ export default function Planning() {
                   <SelectItem value="warehouse">
                     <div className="flex items-center gap-2">
                       <Warehouse className="h-4 w-4" />
-                      <span>Almacén Central</span>
+                      <span>Todos los Almacenes (Agregado)</span>
                     </div>
                   </SelectItem>
                   {locations
-                    ?.filter((loc) => loc.type === 'CENTRO')
+                    ?.filter((loc) => loc.type === 'WAREHOUSE')
+                    .map((loc) => (
+                      <SelectItem key={loc._id} value={loc._id}>
+                        <div className="flex items-center gap-2">
+                          <Warehouse className="h-4 w-4" />
+                          <span>{loc.name}</span>
+                        </div>
+                      </SelectItem>
+                    ))}
+                  {locations
+                    ?.filter((loc) => loc.type === 'CENTRO' || loc.type === 'HOSPITAL' || loc.type === 'CLINIC')
                     .map((loc) => (
                       <SelectItem key={loc._id} value={loc._id}>
                         {loc.name}
