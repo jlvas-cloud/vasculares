@@ -480,6 +480,8 @@ exports.getPlanningData = async (req, res, next) => {
     // Get stock levels per product
     const mongoose = require('mongoose');
     let stockLevels;
+    let warehouseStockLevels = {}; // For location view, track warehouse stock separately
+
     if (isLocationView) {
       // Stock at specific location
       stockLevels = await Inventario.aggregate([
@@ -491,6 +493,31 @@ exports.getPlanningData = async (req, res, next) => {
           },
         },
       ]);
+
+      // Also get warehouse stock for all products (to show availability for consignment)
+      const warehouseStockData = await Inventario.aggregate([
+        {
+          $lookup: {
+            from: 'locaciones',
+            localField: 'locationId',
+            foreignField: '_id',
+            as: 'location',
+          },
+        },
+        { $unwind: '$location' },
+        { $match: { 'location.type': 'WAREHOUSE' } },
+        {
+          $group: {
+            _id: '$productId',
+            warehouseStock: { $sum: '$quantityAvailable' },
+          },
+        },
+      ]);
+
+      // Create map for warehouse stock
+      warehouseStockData.forEach((item) => {
+        warehouseStockLevels[item._id.toString()] = item.warehouseStock;
+      });
     } else {
       // Warehouse view with consigned breakdown
       stockLevels = await Inventario.aggregate([
@@ -528,6 +555,40 @@ exports.getPlanningData = async (req, res, next) => {
           },
         },
       ]);
+
+      // Also get per-centro stock breakdown for calculating system-wide needs
+      const centroStockData = await Inventario.aggregate([
+        {
+          $lookup: {
+            from: 'locaciones',
+            localField: 'locationId',
+            foreignField: '_id',
+            as: 'location',
+          },
+        },
+        { $unwind: '$location' },
+        { $match: { 'location.type': { $in: ['CENTRO', 'HOSPITAL', 'CLINIC'] } } },
+        {
+          $group: {
+            _id: {
+              productId: '$productId',
+              locationId: '$locationId',
+            },
+            centroStock: { $sum: '$quantityAvailable' },
+          },
+        },
+      ]);
+
+      // Create map for centro stocks: { productId: { locationId: stock } }
+      warehouseStockLevels = {}; // Reuse this variable for centro stocks in warehouse view
+      centroStockData.forEach((item) => {
+        const prodId = item._id.productId.toString();
+        const locId = item._id.locationId.toString();
+        if (!warehouseStockLevels[prodId]) {
+          warehouseStockLevels[prodId] = {};
+        }
+        warehouseStockLevels[prodId][locId] = item.centroStock;
+      });
     }
 
     // Calculate consumption averages (last 3 months)
@@ -559,8 +620,10 @@ exports.getPlanningData = async (req, res, next) => {
       },
     ]);
 
-    // Get per-location targets if viewing a specific location
+    // Get per-location targets
     let locationTargets = {};
+    let allLocationTargets = []; // For warehouse view, get all centro targets
+
     if (isLocationView) {
       const targets = await InventarioObjetivos.find({
         locationId,
@@ -570,6 +633,13 @@ exports.getPlanningData = async (req, res, next) => {
       targets.forEach((target) => {
         locationTargets[target.productId.toString()] = target;
       });
+    } else {
+      // Warehouse view: get all centro targets to calculate total needs
+      allLocationTargets = await InventarioObjetivos.find({
+        active: true,
+      })
+        .populate('locationId', 'type')
+        .lean();
     }
 
     // Create maps for easy lookup
@@ -611,6 +681,7 @@ exports.getPlanningData = async (req, res, next) => {
         // Location-specific view
         const stock = stockMap[product._id.toString()] || { locationStock: 0 };
         const locationTarget = locationTargets[product._id.toString()];
+        const warehouseStock = warehouseStockLevels[product._id.toString()] || 0;
 
         const currentStock = stock.locationStock;
         const targetStock = locationTarget?.targetStock || 0;
@@ -627,6 +698,7 @@ exports.getPlanningData = async (req, res, next) => {
         result = {
           ...result,
           currentStock,
+          warehouseStock, // Available in warehouse for consignment
           targetStock,
           suggestedConsignment,
           daysOfCoverage,
@@ -634,7 +706,7 @@ exports.getPlanningData = async (req, res, next) => {
           hasTarget: !!locationTarget,
         };
       } else {
-        // Warehouse view
+        // Warehouse view - Option 1: System-wide calculation
         const stock = stockMap[product._id.toString()] || {
           warehouseStock: 0,
           consignedStock: 0,
@@ -642,12 +714,35 @@ exports.getPlanningData = async (req, res, next) => {
         };
 
         const settings = product.inventorySettings || {};
-        const targetStock = settings.targetStockWarehouse || 0;
+        const warehouseTarget = settings.targetStockWarehouse || 0;
 
-        // Calculate suggested order = Stock Objetivo - Stock Actual
-        const suggestedOrder = Math.max(0, targetStock - stock.warehouseStock);
+        // Get all centro targets and stocks for this product
+        const centroTargetsForProduct = allLocationTargets.filter(
+          (t) => t.productId.toString() === product._id.toString() &&
+                 t.locationId?.type !== 'WAREHOUSE' // Only centro targets
+        );
 
-        // Calculate coverage days
+        const centroStocksMap = warehouseStockLevels[product._id.toString()] || {};
+
+        // Calculate system-wide totals
+        let totalCentroTargets = 0;
+        let totalCentroStock = 0;
+
+        centroTargetsForProduct.forEach((target) => {
+          totalCentroTargets += target.targetStock || 0;
+          const locId = target.locationId._id.toString();
+          totalCentroStock += centroStocksMap[locId] || 0;
+        });
+
+        // Option 1: System-wide approach
+        // Total Target = Warehouse Target + All Centro Targets
+        // Total Stock = Warehouse Stock + All Centro Stocks
+        // Suggested Order = Total Target - Total Stock
+        const systemTarget = warehouseTarget + totalCentroTargets;
+        const systemStock = stock.warehouseStock + totalCentroStock;
+        const suggestedOrder = Math.max(0, systemTarget - systemStock);
+
+        // Calculate coverage days based on warehouse stock only
         const daysOfCoverage =
           consumption.avgMonthlyConsumption > 0
             ? Math.round((stock.warehouseStock / consumption.avgMonthlyConsumption) * 30)
@@ -658,10 +753,11 @@ exports.getPlanningData = async (req, res, next) => {
           warehouseStock: stock.warehouseStock,
           consignedStock: stock.consignedStock,
           totalStock: stock.totalStock,
-          targetStock,
+          targetStock: warehouseTarget, // Show warehouse target in column
+          systemTarget, // Total system target (for debugging/future use)
           suggestedOrder,
           daysOfCoverage,
-          status: calculateStatus(stock.warehouseStock, targetStock),
+          status: calculateStatus(stock.warehouseStock, warehouseTarget),
         };
       }
 

@@ -304,6 +304,9 @@ export default function Planning() {
                   <th className="text-right p-2 font-medium">
                     {isWarehouseView ? 'Sugerido Ordenar' : 'Sugerido Consignar'}
                   </th>
+                  {!isWarehouseView && (
+                    <th className="text-right p-2 font-medium">Disp. Almacén</th>
+                  )}
                   <th className="text-center p-2 font-medium">Estado</th>
                   <th className="text-center p-2 font-medium">Acciones</th>
                 </tr>
@@ -399,6 +402,19 @@ export default function Planning() {
                             '-'
                           )}
                         </td>
+                        {!isWarehouseView && (
+                          <td className="p-2 text-right">
+                            <span
+                              className={`font-medium ${
+                                product.warehouseStock > 0
+                                  ? 'text-green-600'
+                                  : 'text-red-600'
+                              }`}
+                            >
+                              {product.warehouseStock || 0}
+                            </span>
+                          </td>
+                        )}
                         <td className="p-2 text-center">
                           <Badge
                             variant="outline"
