@@ -157,7 +157,7 @@ export default function Locations() {
                 <div className="flex justify-between">
                   <span className="text-muted-foreground">Tipo:</span>
                   <span className="font-medium">
-                    {location.type === 'WAREHOUSE' ? 'Almacén' : location.type === 'HOSPITAL' ? 'Hospital' : 'Clínica'}
+                    {location.type === 'WAREHOUSE' ? 'Almacén' : 'Centro'}
                   </span>
                 </div>
                 {location.contact?.name && (

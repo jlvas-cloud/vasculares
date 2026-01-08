@@ -1,4 +1,4 @@
-import { useState, useRef } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { productosApi } from '../lib/api';
 import { Button } from '../components/ui/button';
@@ -7,15 +7,18 @@ import { Label } from '../components/ui/label';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../components/ui/card';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from '../components/ui/dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select';
-import { Plus, Package } from 'lucide-react';
+import { Plus, Package, Edit } from 'lucide-react';
 import { useToast } from '../components/ui/toast';
 
 export default function Products() {
   const [open, setOpen] = useState(false);
+  const [editingProduct, setEditingProduct] = useState(null);
   const [selectedCategory, setSelectedCategory] = useState('');
   const formRef = useRef(null);
   const queryClient = useQueryClient();
   const toast = useToast();
+
+  const isEditing = !!editingProduct;
 
   const { data: products, isLoading } = useQuery({
     queryKey: ['productos'],
@@ -31,9 +34,7 @@ export default function Products() {
     mutationFn: productosApi.create,
     onSuccess: () => {
       queryClient.invalidateQueries(['productos']);
-      formRef.current?.reset();
-      setSelectedCategory('');
-      setOpen(false);
+      handleCloseDialog();
       toast.success('Producto creado exitosamente');
     },
     onError: (error) => {
@@ -41,13 +42,37 @@ export default function Products() {
     },
   });
 
+  const updateMutation = useMutation({
+    mutationFn: ({ id, data }) => productosApi.update(id, data),
+    onSuccess: () => {
+      queryClient.invalidateQueries(['productos']);
+      handleCloseDialog();
+      toast.success('Producto actualizado exitosamente');
+    },
+    onError: (error) => {
+      toast.error(error.response?.data?.error || 'Error al actualizar producto');
+    },
+  });
+
+  const handleCloseDialog = () => {
+    setOpen(false);
+    setEditingProduct(null);
+    setSelectedCategory('');
+    formRef.current?.reset();
+  };
+
   const handleDialogChange = (isOpen) => {
-    setOpen(isOpen);
     if (!isOpen) {
-      // Reset form when dialog closes
-      formRef.current?.reset();
-      setSelectedCategory('');
+      handleCloseDialog();
+    } else {
+      setOpen(true);
     }
+  };
+
+  const handleEdit = (product) => {
+    setEditingProduct(product);
+    setSelectedCategory(product.category);
+    setOpen(true);
   };
 
   const handleSubmit = (e) => {
@@ -67,27 +92,14 @@ export default function Products() {
 
     if (diameter) specifications.diameter = parseFloat(diameter);
     if (length) specifications.length = parseFloat(length);
-    // Auto-generate size string for display (e.g., "2.25/13")
     if (diameter && length) {
       specifications.size = `${diameter}/${length}`;
     }
     if (type) specifications.type = type;
 
-    const inventorySettings = {};
-    const targetStock = formData.get('targetStockWarehouse');
-    const reorderPoint = formData.get('reorderPoint');
-    const minStock = formData.get('minStockLevel');
-    const maxStock = formData.get('maxStockLevel');
-
-    if (targetStock) inventorySettings.targetStockWarehouse = parseInt(targetStock);
-    if (reorderPoint) inventorySettings.reorderPoint = parseInt(reorderPoint);
-    if (minStock) inventorySettings.minStockLevel = parseInt(minStock);
-    if (maxStock) inventorySettings.maxStockLevel = parseInt(maxStock);
-
     const data = {
       name: formData.get('name'),
       code: parseInt(formData.get('code')),
-      missionCode: formData.get('missionCode') ? parseInt(formData.get('missionCode')) : undefined,
       category: selectedCategory,
       subcategory: formData.get('subcategory') || undefined,
     };
@@ -96,11 +108,11 @@ export default function Products() {
       data.specifications = specifications;
     }
 
-    if (Object.keys(inventorySettings).length > 0) {
-      data.inventorySettings = inventorySettings;
+    if (isEditing) {
+      updateMutation.mutate({ id: editingProduct._id, data });
+    } else {
+      createMutation.mutate(data);
     }
-
-    createMutation.mutate(data);
   };
 
   if (isLoading) return <div>Cargando...</div>;
@@ -122,23 +134,32 @@ export default function Products() {
           <DialogContent>
             <form ref={formRef} onSubmit={handleSubmit}>
               <DialogHeader>
-                <DialogTitle>Crear Producto</DialogTitle>
-                <DialogDescription>Agregar un nuevo producto al catálogo</DialogDescription>
+                <DialogTitle>{isEditing ? 'Editar Producto' : 'Crear Producto'}</DialogTitle>
+                <DialogDescription>
+                  {isEditing ? 'Modificar información del producto' : 'Agregar un nuevo producto al catálogo'}
+                </DialogDescription>
               </DialogHeader>
               <div className="grid gap-4 py-4">
                 <div className="grid gap-2">
                   <Label htmlFor="name">Nombre *</Label>
-                  <Input id="name" name="name" placeholder="Orsiro 2.25/13" required />
+                  <Input
+                    id="name"
+                    name="name"
+                    placeholder="Orsiro 2.25/13"
+                    defaultValue={editingProduct?.name || ''}
+                    required
+                  />
                 </div>
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="grid gap-2">
-                    <Label htmlFor="code">Código *</Label>
-                    <Input id="code" name="code" type="number" placeholder="364475" required />
-                  </div>
-                  <div className="grid gap-2">
-                    <Label htmlFor="missionCode">Código Mission</Label>
-                    <Input id="missionCode" name="missionCode" type="number" placeholder="419107" />
-                  </div>
+                <div className="grid gap-2">
+                  <Label htmlFor="code">Código *</Label>
+                  <Input
+                    id="code"
+                    name="code"
+                    type="number"
+                    placeholder="364475"
+                    defaultValue={editingProduct?.code || ''}
+                    required
+                  />
                 </div>
                 <div className="grid gap-2">
                   <Label htmlFor="category">Categoría *</Label>
@@ -157,7 +178,12 @@ export default function Products() {
                 </div>
                 <div className="grid gap-2">
                   <Label htmlFor="subcategory">Subcategoría</Label>
-                  <Input id="subcategory" name="subcategory" placeholder="Orsiro" />
+                  <Input
+                    id="subcategory"
+                    name="subcategory"
+                    placeholder="Orsiro"
+                    defaultValue={editingProduct?.subcategory || ''}
+                  />
                 </div>
                 <div className="grid grid-cols-3 gap-4">
                   <div className="grid gap-2">
@@ -169,6 +195,7 @@ export default function Products() {
                       step="0.25"
                       min="0"
                       placeholder="2.25"
+                      defaultValue={editingProduct?.specifications?.diameter || ''}
                     />
                   </div>
                   <div className="grid gap-2">
@@ -179,68 +206,30 @@ export default function Products() {
                       type="number"
                       min="0"
                       placeholder="13"
+                      defaultValue={editingProduct?.specifications?.length || ''}
                     />
                   </div>
                   <div className="grid gap-2">
                     <Label htmlFor="type">Tipo</Label>
-                    <Input id="type" name="type" placeholder="Regular" />
-                  </div>
-                </div>
-
-                {/* Inventory Settings Section */}
-                <div className="border-t pt-4 mt-2">
-                  <h3 className="text-sm font-medium mb-3">Niveles de Inventario (Opcional)</h3>
-                  <div className="grid grid-cols-2 gap-4">
-                    <div className="grid gap-2">
-                      <Label htmlFor="targetStockWarehouse">Stock Objetivo</Label>
-                      <Input
-                        id="targetStockWarehouse"
-                        name="targetStockWarehouse"
-                        type="number"
-                        min="0"
-                        placeholder="0"
-                      />
-                      <p className="text-xs text-muted-foreground">Cantidad ideal en almacén</p>
-                    </div>
-                    <div className="grid gap-2">
-                      <Label htmlFor="reorderPoint">Punto de Reorden</Label>
-                      <Input
-                        id="reorderPoint"
-                        name="reorderPoint"
-                        type="number"
-                        min="0"
-                        placeholder="0"
-                      />
-                      <p className="text-xs text-muted-foreground">Disparar orden cuando baje de este nivel</p>
-                    </div>
-                    <div className="grid gap-2">
-                      <Label htmlFor="minStockLevel">Stock Mínimo</Label>
-                      <Input
-                        id="minStockLevel"
-                        name="minStockLevel"
-                        type="number"
-                        min="0"
-                        placeholder="0"
-                      />
-                      <p className="text-xs text-muted-foreground">Stock de seguridad mínimo</p>
-                    </div>
-                    <div className="grid gap-2">
-                      <Label htmlFor="maxStockLevel">Stock Máximo</Label>
-                      <Input
-                        id="maxStockLevel"
-                        name="maxStockLevel"
-                        type="number"
-                        min="0"
-                        placeholder="0"
-                      />
-                      <p className="text-xs text-muted-foreground">Evitar sobr stock</p>
-                    </div>
+                    <Input
+                      id="type"
+                      name="type"
+                      placeholder="Regular"
+                      defaultValue={editingProduct?.specifications?.type || ''}
+                    />
                   </div>
                 </div>
               </div>
               <DialogFooter>
-                <Button type="submit" disabled={createMutation.isPending}>
-                  {createMutation.isPending ? 'Creando...' : 'Crear Producto'}
+                <Button type="button" variant="outline" onClick={handleCloseDialog}>
+                  Cancelar
+                </Button>
+                <Button type="submit" disabled={createMutation.isPending || updateMutation.isPending}>
+                  {createMutation.isPending || updateMutation.isPending
+                    ? 'Guardando...'
+                    : isEditing
+                    ? 'Guardar Cambios'
+                    : 'Crear Producto'}
                 </Button>
               </DialogFooter>
             </form>
@@ -260,6 +249,9 @@ export default function Products() {
                     <CardDescription>Código: {product.code}</CardDescription>
                   </div>
                 </div>
+                <Button variant="ghost" size="sm" onClick={() => handleEdit(product)}>
+                  <Edit className="h-4 w-4" />
+                </Button>
               </div>
             </CardHeader>
             <CardContent>
@@ -284,12 +276,6 @@ export default function Products() {
                         ? `${product.specifications.diameter}/${product.specifications.length}`
                         : product.specifications?.size}
                     </span>
-                  </div>
-                )}
-                {product.missionCode && (
-                  <div className="flex justify-between">
-                    <span className="text-muted-foreground">Código Mission:</span>
-                    <span className="font-medium">{product.missionCode}</span>
                   </div>
                 )}
               </div>

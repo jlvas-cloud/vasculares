@@ -228,9 +228,8 @@ exports.deactivate = async (req, res, next) => {
 exports.getTypes = async (req, res, next) => {
   try {
     const types = [
-      { value: 'HOSPITAL', label: 'Hospital' },
+      { value: 'CENTRO', label: 'Centro' },
       { value: 'WAREHOUSE', label: 'Almacén' },
-      { value: 'CLINIC', label: 'Clínica' }
     ];
 
     res.json(types);

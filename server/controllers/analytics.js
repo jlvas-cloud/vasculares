@@ -518,12 +518,7 @@ exports.getPlanningData = async (req, res, next) => {
             consignedStock: {
               $sum: {
                 $cond: [
-                  {
-                    $or: [
-                      { $eq: ['$location.type', 'HOSPITAL'] },
-                      { $eq: ['$location.type', 'CLINIC'] },
-                    ],
-                  },
+                  { $eq: ['$location.type', 'CENTRO'] },
                   '$quantityAvailable',
                   0,
                 ],

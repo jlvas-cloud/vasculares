@@ -10,7 +10,7 @@ router.use(verifyUser, getCompanyId);
 // Validation rules
 const validateLocation = [
   body('name').trim().notEmpty().withMessage('Nombre es requerido'),
-  body('type').isIn(['HOSPITAL', 'WAREHOUSE', 'CLINIC']).withMessage('Tipo inválido'),
+  body('type').isIn(['CENTRO', 'WAREHOUSE']).withMessage('Tipo inválido'),
 ];
 
 // Routes

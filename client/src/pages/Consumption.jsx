@@ -29,7 +29,7 @@ export default function Consumption() {
     queryFn: () => locacionesApi.getAll({ active: true }).then((res) => res.data),
   });
 
-  const hospitals = allHospitals?.filter((loc) => loc.type === 'HOSPITAL' || loc.type === 'CLINIC') || [];
+  const centros = allHospitals?.filter((loc) => loc.type === 'CENTRO') || [];
 
   const { data: lots } = useQuery({
     queryKey: ['lotes-consumption', selectedProduct, selectedLocation],
@@ -75,7 +75,7 @@ export default function Consumption() {
     <div className="max-w-2xl">
       <div className="mb-6">
         <h1 className="text-3xl font-bold">Registrar Consumo</h1>
-        <p className="text-muted-foreground">Registrar productos utilizados en el hospital o clínica</p>
+        <p className="text-muted-foreground">Registrar productos utilizados en el centro</p>
       </div>
 
       <Card>
@@ -86,15 +86,15 @@ export default function Consumption() {
         <CardContent>
           <form onSubmit={handleSubmit} className="space-y-4">
             <div className="grid gap-2">
-              <Label>Hospital/Clínica</Label>
+              <Label>Centro</Label>
               <Select value={selectedLocation} onValueChange={setSelectedLocation} required>
                 <SelectTrigger>
-                  <SelectValue placeholder="Seleccionar hospital o clínica" />
+                  <SelectValue placeholder="Seleccionar centro" />
                 </SelectTrigger>
                 <SelectContent>
-                  {hospitals?.map((loc) => (
+                  {centros?.map((loc) => (
                     <SelectItem key={loc._id} value={loc._id}>
-                      {loc.name} ({loc.type === 'HOSPITAL' ? 'Hospital' : 'Clínica'}) - {loc.fullName}
+                      {loc.name} - {loc.fullName}
                     </SelectItem>
                   ))}
                 </SelectContent>

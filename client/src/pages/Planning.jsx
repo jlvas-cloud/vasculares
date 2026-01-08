@@ -234,10 +234,10 @@ export default function Planning() {
                     </div>
                   </SelectItem>
                   {locations
-                    ?.filter((loc) => loc.type === 'HOSPITAL' || loc.type === 'CLINIC')
+                    ?.filter((loc) => loc.type === 'CENTRO')
                     .map((loc) => (
                       <SelectItem key={loc._id} value={loc._id}>
-                        {loc.name} ({loc.type === 'HOSPITAL' ? 'Hospital' : 'Clínica'})
+                        {loc.name}
                       </SelectItem>
                     ))}
                 </SelectContent>

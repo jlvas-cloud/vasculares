@@ -1,6 +1,6 @@
 /**
  * Locacion (Location) Schema
- * Hospitals and warehouses that hold consignment inventory
+ * Centers and warehouses that hold consignment inventory
  */
 const mongoose = require('mongoose');
 const Schema = mongoose.Schema;
@@ -18,7 +18,7 @@ const locacionSchema = new Schema({
   type: {
     type: String,
     required: true,
-    enum: ['HOSPITAL', 'WAREHOUSE', 'CLINIC'],
+    enum: ['CENTRO', 'WAREHOUSE'],
   },
 
   // Contact information

@@ -35,7 +35,7 @@ export default function Consignment() {
     queryFn: () => locacionesApi.getAll({ active: true }).then((res) => res.data),
   });
 
-  const hospitals = allHospitals?.filter((loc) => loc.type === 'HOSPITAL' || loc.type === 'CLINIC') || [];
+  const centros = allHospitals?.filter((loc) => loc.type === 'CENTRO') || [];
 
   const { data: lots } = useQuery({
     queryKey: ['lotes-available', selectedProduct, selectedFromLocation],
@@ -79,7 +79,7 @@ export default function Consignment() {
     <div className="max-w-2xl">
       <div className="mb-6">
         <h1 className="text-3xl font-bold">Enviar en Consignación</h1>
-        <p className="text-muted-foreground">Enviar productos del almacén al hospital o clínica</p>
+        <p className="text-muted-foreground">Enviar productos del almacén al centro</p>
       </div>
 
       <Card>
@@ -107,15 +107,15 @@ export default function Consignment() {
               </div>
 
               <div className="grid gap-2">
-                <Label>Hacia (Hospital/Clínica)</Label>
+                <Label>Hacia (Centro)</Label>
                 <Select value={selectedToLocation} onValueChange={setSelectedToLocation} required>
                   <SelectTrigger>
                     <SelectValue placeholder="Seleccionar" />
                   </SelectTrigger>
                   <SelectContent>
-                    {hospitals?.map((loc) => (
+                    {centros?.map((loc) => (
                       <SelectItem key={loc._id} value={loc._id}>
-                        {loc.name} ({loc.type === 'HOSPITAL' ? 'Hospital' : 'Clínica'})
+                        {loc.name}
                       </SelectItem>
                     ))}
                   </SelectContent>
