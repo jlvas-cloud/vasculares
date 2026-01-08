@@ -7,6 +7,7 @@ const {
   getProductosModel,
   getLocacionesModel,
 } = require('../getModel');
+const { validationResult } = require('express-validator');
 
 /**
  * GET /api/inventario-objetivos
@@ -69,6 +70,11 @@ exports.getOne = async (req, res, next) => {
  */
 exports.upsert = async (req, res, next) => {
   try {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({ errors: errors.array() });
+    }
+
     const InventarioObjetivos = await getInventarioObjetivosModel(req.companyId);
 
     const {
@@ -137,6 +143,11 @@ exports.upsert = async (req, res, next) => {
  */
 exports.update = async (req, res, next) => {
   try {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({ errors: errors.array() });
+    }
+
     const InventarioObjetivos = await getInventarioObjetivosModel(req.companyId);
 
     const {

@@ -440,11 +440,12 @@ exports.getPlanningData = async (req, res, next) => {
       .lean();
 
     // Get stock levels per product
+    const mongoose = require('mongoose');
     let stockLevels;
     if (isLocationView) {
       // Stock at specific location
       stockLevels = await Inventario.aggregate([
-        { $match: { locationId: require('mongoose').Types.ObjectId(locationId) } },
+        { $match: { locationId: new mongoose.Types.ObjectId(locationId) } },
         {
           $group: {
             _id: '$productId',
@@ -507,7 +508,7 @@ exports.getPlanningData = async (req, res, next) => {
 
     // If location view, filter consumption by that location
     if (isLocationView) {
-      consumptionMatch.toLocationId = require('mongoose').Types.ObjectId(locationId);
+      consumptionMatch.toLocationId = new mongoose.Types.ObjectId(locationId);
     }
 
     const consumptionData = await Transacciones.aggregate([

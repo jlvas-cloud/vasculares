@@ -46,7 +46,9 @@ export default function Planning() {
       toast.success('Stock objetivo actualizado');
     },
     onError: (error) => {
-      toast.error(error.response?.data?.error || 'Error al actualizar');
+      console.error('Update error:', error);
+      const message = error?.response?.data?.error || error?.message || 'Error al actualizar';
+      toast.error(message);
     },
   });
 
@@ -60,7 +62,9 @@ export default function Planning() {
       toast.success('Objetivo de locación actualizado');
     },
     onError: (error) => {
-      toast.error(error.response?.data?.error || 'Error al actualizar');
+      console.error('Upsert error:', error);
+      const message = error?.response?.data?.error || error?.message || 'Error al actualizar';
+      toast.error(message);
     },
   });
 
