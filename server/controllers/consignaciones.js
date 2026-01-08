@@ -2,6 +2,7 @@
  * Consignaciones Controller
  * Handle bulk consignments from warehouse to centros
  */
+const mongoose = require('mongoose');
 const {
   getConsignacionesModel,
   getTransaccionesModel,
@@ -14,16 +15,21 @@ const { validationResult } = require('express-validator');
 
 /**
  * Helper: Update or create inventory record
+ * @param {string} companyId - Company identifier
+ * @param {ObjectId} productId - Product ID
+ * @param {ObjectId} locationId - Location ID
+ * @param {ClientSession} session - Optional MongoDB session for transactions
  */
-async function updateInventario(companyId, productId, locationId) {
+async function updateInventario(companyId, productId, locationId, session = null) {
   const Inventario = await getInventarioModel(companyId);
   const Lotes = await getLotesModel(companyId);
 
   // Aggregate all lotes for this product at this location
-  const lotes = await Lotes.find({
+  const query = Lotes.find({
     productId,
     currentLocationId: locationId,
   });
+  const lotes = session ? await query.session(session) : await query;
 
   const aggregated = lotes.reduce(
     (acc, lote) => {
@@ -46,6 +52,9 @@ async function updateInventario(companyId, productId, locationId) {
   );
 
   // Update or create inventory record
+  const options = { upsert: true, new: true };
+  if (session) options.session = session;
+
   await Inventario.findOneAndUpdate(
     { productId, locationId },
     {
@@ -55,7 +64,7 @@ async function updateInventario(companyId, productId, locationId) {
         updatedAt: new Date(),
       },
     },
-    { upsert: true, new: true }
+    options
   );
 }
 
@@ -115,30 +124,52 @@ exports.getOne = async (req, res, next) => {
 /**
  * POST /api/consignaciones
  * Create bulk consignment
+ * Uses MongoDB transactions to ensure atomicity
  */
 exports.create = async (req, res, next) => {
+  // Start a session for the transaction
+  const session = await mongoose.startSession();
+  session.startTransaction();
+
   try {
     const errors = validationResult(req);
     if (!errors.isEmpty()) {
+      await session.abortTransaction();
+      session.endSession();
       return res.status(400).json({ errors: errors.array() });
     }
 
     const { fromLocationId, toLocationId, items, notes } = req.body;
 
+    // Validate no duplicate products in items array
+    const productIds = items.map(item => item.productId);
+    const uniqueProductIds = [...new Set(productIds)];
+    if (productIds.length !== uniqueProductIds.length) {
+      await session.abortTransaction();
+      session.endSession();
+      return res.status(400).json({ error: 'Duplicate products in consignment. Each product should appear only once.' });
+    }
+
     // Validate locations exist
     const Locaciones = await getLocacionesModel(req.companyId);
-    const fromLocation = await Locaciones.findById(fromLocationId);
-    const toLocation = await Locaciones.findById(toLocationId);
+    const fromLocation = await Locaciones.findById(fromLocationId).session(session);
+    const toLocation = await Locaciones.findById(toLocationId).session(session);
 
     if (!fromLocation) {
+      await session.abortTransaction();
+      session.endSession();
       return res.status(404).json({ error: 'Warehouse location not found' });
     }
     if (!toLocation) {
+      await session.abortTransaction();
+      session.endSession();
       return res.status(404).json({ error: 'Centro location not found' });
     }
 
     // Validate fromLocation is a warehouse
     if (fromLocation.type !== 'WAREHOUSE') {
+      await session.abortTransaction();
+      session.endSession();
       return res.status(400).json({ error: 'From location must be a warehouse' });
     }
 
@@ -148,8 +179,10 @@ exports.create = async (req, res, next) => {
 
     // Validate all products exist and have sufficient stock
     for (const item of items) {
-      const product = await Productos.findById(item.productId);
+      const product = await Productos.findById(item.productId).session(session);
       if (!product) {
+        await session.abortTransaction();
+        session.endSession();
         return res.status(404).json({ error: `Product ${item.productId} not found` });
       }
 
@@ -158,11 +191,13 @@ exports.create = async (req, res, next) => {
         productId: item.productId,
         currentLocationId: fromLocationId,
         quantityAvailable: { $gt: 0 },
-      }).sort({ expiryDate: 1 }); // FIFO
+      }).sort({ expiryDate: 1 }).session(session);
 
       const totalAvailable = availableLotes.reduce((sum, lote) => sum + lote.quantityAvailable, 0);
 
       if (totalAvailable < item.quantitySent) {
+        await session.abortTransaction();
+        session.endSession();
         return res.status(400).json({
           error: `Insufficient stock for ${product.name}. Available: ${totalAvailable}, Requested: ${item.quantitySent}`,
         });
@@ -190,7 +225,7 @@ exports.create = async (req, res, next) => {
       notes: notes || '',
     });
 
-    await consignacion.save();
+    await consignacion.save({ session });
 
     // Deduct stock from warehouse and create in-transit inventory at centro (FIFO)
     for (const item of items) {
@@ -199,7 +234,7 @@ exports.create = async (req, res, next) => {
         productId: item.productId,
         currentLocationId: fromLocationId,
         quantityAvailable: { $gt: 0 },
-      }).sort({ expiryDate: 1 }); // FIFO
+      }).sort({ expiryDate: 1 }).session(session);
 
       for (const lote of availableLotes) {
         if (remaining <= 0) break;
@@ -209,14 +244,14 @@ exports.create = async (req, res, next) => {
         // Update warehouse lote: reduce available, increase consigned
         lote.quantityAvailable -= toDeduct;
         lote.quantityConsigned += toDeduct;
-        await lote.save();
+        await lote.save({ session });
 
         // Create or update centro lote with "in transit" status (quantityConsigned)
         let centroLote = await Lotes.findOne({
           productId: item.productId,
           lotNumber: lote.lotNumber,
           currentLocationId: toLocationId,
-        });
+        }).session(session);
 
         if (centroLote) {
           // Update existing centro lote: increase total and consigned
@@ -233,7 +268,7 @@ exports.create = async (req, res, next) => {
             detalles: `In transit from ${fromLocation.name} - Consignment #${consignacion._id}`,
           });
 
-          await centroLote.save();
+          await centroLote.save({ session });
         } else {
           // Create new lote at centro with consigned status (in transit)
           centroLote = new Lotes({
@@ -263,7 +298,7 @@ exports.create = async (req, res, next) => {
               detalles: `In transit from ${fromLocation.name} - Consignment #${consignacion._id}`,
             }],
           });
-          await centroLote.save();
+          await centroLote.save({ session });
         }
 
         // Create transaction record
@@ -285,23 +320,30 @@ exports.create = async (req, res, next) => {
           status: 'COMPLETED',
         });
 
-        await transaccion.save();
+        await transaccion.save({ session });
 
         remaining -= toDeduct;
       }
 
       // Update warehouse inventory
-      await updateInventario(req.companyId, item.productId, fromLocationId);
+      await updateInventario(req.companyId, item.productId, fromLocationId, session);
 
       // Update centro inventory to show in-transit stock
-      await updateInventario(req.companyId, item.productId, toLocationId);
+      await updateInventario(req.companyId, item.productId, toLocationId, session);
     }
+
+    // Commit the transaction - all operations succeeded
+    await session.commitTransaction();
+    session.endSession();
 
     res.status(201).json({
       message: 'Consignment created successfully',
       consignacion,
     });
   } catch (error) {
+    // Abort transaction on any error - all changes are rolled back
+    await session.abortTransaction();
+    session.endSession();
     console.error('Error creating consignment:', error);
     next(error);
   }
@@ -310,24 +352,35 @@ exports.create = async (req, res, next) => {
 /**
  * PUT /api/consignaciones/:id/confirm
  * Confirm receipt of consignment (full or partial)
+ * Uses MongoDB transactions to ensure atomicity
  */
 exports.confirm = async (req, res, next) => {
+  // Start a session for the transaction
+  const session = await mongoose.startSession();
+  session.startTransaction();
+
   try {
     const errors = validationResult(req);
     if (!errors.isEmpty()) {
+      await session.abortTransaction();
+      session.endSession();
       return res.status(400).json({ errors: errors.array() });
     }
 
     const { items, notes } = req.body; // items: [{ productId, quantityReceived }]
 
     const Consignaciones = await getConsignacionesModel(req.companyId);
-    const consignacion = await Consignaciones.findById(req.params.id);
+    const consignacion = await Consignaciones.findById(req.params.id).session(session);
 
     if (!consignacion) {
+      await session.abortTransaction();
+      session.endSession();
       return res.status(404).json({ error: 'Consignment not found' });
     }
 
     if (consignacion.status === 'RECIBIDO') {
+      await session.abortTransaction();
+      session.endSession();
       return res.status(400).json({ error: 'Consignment already confirmed' });
     }
 
@@ -341,6 +394,8 @@ exports.confirm = async (req, res, next) => {
       );
 
       if (!consignacionItem) {
+        await session.abortTransaction();
+        session.endSession();
         return res.status(400).json({ error: `Product ${receivedItem.productId} not in consignment` });
       }
 
@@ -349,12 +404,16 @@ exports.confirm = async (req, res, next) => {
 
       // Validate quantity received
       if (quantityReceived < 0) {
+        await session.abortTransaction();
+        session.endSession();
         return res.status(400).json({
           error: `Quantity received cannot be negative for product ${receivedItem.productId}`,
         });
       }
 
       if (quantityReceived > quantitySent) {
+        await session.abortTransaction();
+        session.endSession();
         return res.status(400).json({
           error: `Cannot receive more than sent for product ${receivedItem.productId}`,
         });
@@ -371,7 +430,7 @@ exports.confirm = async (req, res, next) => {
         fromLocationId: consignacion.fromLocationId,
         toLocationId: consignacion.toLocationId,
         notes: { $regex: `Consignment #${consignacion._id}` },
-      }).sort({ createdAt: 1 });
+      }).sort({ createdAt: 1 }).session(session);
 
       // Track how much of each transaction has been processed
       const transactionUsage = new Map();
@@ -387,20 +446,20 @@ exports.confirm = async (req, res, next) => {
           transactionUsage.set(transaction._id.toString(), toReceive);
 
           // Find the warehouse lote to get lot number
-          const warehouseLote = await Lotes.findById(transaction.lotId);
+          const warehouseLote = await Lotes.findById(transaction.lotId).session(session);
 
           if (warehouseLote) {
             // Reduce consigned and total at warehouse (stock now belongs to centro)
             warehouseLote.quantityConsigned -= toReceive;
             warehouseLote.quantityTotal -= toReceive;
-            await warehouseLote.save();
+            await warehouseLote.save({ session });
 
             // Find and update the centro lote (should already exist from creation)
             const centroLote = await Lotes.findOne({
               productId: receivedItem.productId,
               lotNumber: warehouseLote.lotNumber,
               currentLocationId: consignacion.toLocationId,
-            });
+            }).session(session);
 
             if (centroLote) {
               // Convert consigned to available (in-transit → received)
@@ -417,7 +476,7 @@ exports.confirm = async (req, res, next) => {
                 detalles: `Receipt confirmed - Consignment #${consignacion._id}`,
               });
 
-              await centroLote.save();
+              await centroLote.save({ session });
             } else {
               // Fallback: Create new lote if not found (shouldn't happen normally)
               console.warn(`Centro lote not found for ${warehouseLote.lotNumber}, creating new one`);
@@ -448,7 +507,7 @@ exports.confirm = async (req, res, next) => {
                   detalles: `Received from warehouse - Consignment #${consignacion._id}`,
                 }],
               });
-              await newCentroLote.save();
+              await newCentroLote.save({ session });
             }
           }
 
@@ -456,7 +515,7 @@ exports.confirm = async (req, res, next) => {
         }
 
         // Update centro inventory (convert consigned to available)
-        await updateInventario(req.companyId, receivedItem.productId, consignacion.toLocationId);
+        await updateInventario(req.companyId, receivedItem.productId, consignacion.toLocationId, session);
       }
 
       // If partial receipt, return difference to warehouse
@@ -475,20 +534,20 @@ exports.confirm = async (req, res, next) => {
 
           if (toReturn > 0) {
             // Find the warehouse lote
-            const warehouseLote = await Lotes.findById(transaction.lotId);
+            const warehouseLote = await Lotes.findById(transaction.lotId).session(session);
 
             if (warehouseLote) {
               // Return to warehouse (reduce consigned, increase available)
               warehouseLote.quantityConsigned -= toReturn;
               warehouseLote.quantityAvailable += toReturn;
-              await warehouseLote.save();
+              await warehouseLote.save({ session });
 
               // Remove from centro in-transit (reduce both total and consigned)
               const centroLote = await Lotes.findOne({
                 productId: receivedItem.productId,
                 lotNumber: warehouseLote.lotNumber,
                 currentLocationId: consignacion.toLocationId,
-              });
+              }).session(session);
 
               if (centroLote) {
                 centroLote.quantityTotal -= toReturn;
@@ -504,7 +563,7 @@ exports.confirm = async (req, res, next) => {
                   detalles: `Partial receipt - returned to warehouse - Consignment #${consignacion._id}`,
                 });
 
-                await centroLote.save();
+                await centroLote.save({ session });
               }
 
               // Create return transaction
@@ -526,7 +585,7 @@ exports.confirm = async (req, res, next) => {
                 status: 'COMPLETED',
               });
 
-              await returnTransaction.save();
+              await returnTransaction.save({ session });
             }
 
             remainingToReturn -= toReturn;
@@ -534,11 +593,11 @@ exports.confirm = async (req, res, next) => {
         }
 
         // Update centro inventory to reflect returned items
-        await updateInventario(req.companyId, receivedItem.productId, consignacion.toLocationId);
+        await updateInventario(req.companyId, receivedItem.productId, consignacion.toLocationId, session);
       }
 
       // Update warehouse inventory (handles both receive and return updates)
-      await updateInventario(req.companyId, receivedItem.productId, consignacion.fromLocationId);
+      await updateInventario(req.companyId, receivedItem.productId, consignacion.fromLocationId, session);
     }
 
     // Update consignment status
@@ -552,13 +611,20 @@ exports.confirm = async (req, res, next) => {
     };
     if (notes) consignacion.notes = (consignacion.notes || '') + '\n' + notes;
 
-    await consignacion.save();
+    await consignacion.save({ session });
+
+    // Commit the transaction - all operations succeeded
+    await session.commitTransaction();
+    session.endSession();
 
     res.json({
       message: 'Consignment confirmed successfully',
       consignacion,
     });
   } catch (error) {
+    // Abort transaction on any error - all changes are rolled back
+    await session.abortTransaction();
+    session.endSession();
     console.error('Error confirming consignment:', error);
     next(error);
   }
