@@ -19,9 +19,32 @@ Company: HOSPAL_TESTING
 | Code | Name | Maps to Vasculares |
 |------|------|-------------------|
 | 01 | Principal | Almacén Principal (WAREHOUSE) |
-| 10 | Consignacion | Centros (CENTRO) |
+| 10 | Consignacion | Container for all centers |
 | 07 | Cirugia | - |
 | 09 | Santiago | - |
+
+### SAP Bin Locations (Ubicaciones)
+**Important**: Centers are **bin locations** within warehouse 10, not separate warehouses.
+
+| AbsEntry | BinCode | Description |
+|----------|---------|-------------|
+| 2 | 10-CD | Centro Medico Dominicano |
+| 4 | 10-CECANOR | Cecanor |
+| 6 | 10-IDC | IDC |
+| 13 | 10-HOMS | HOMS |
+| 14 | 10-HTPJB | Hospital Tony Perez |
+| 20 | 10-HJMCB | Hospital JM Cabral |
+| ... | ... | (20+ locations) |
+
+**Transfer Structure**:
+```
+Warehouse 01 (Principal)
+    │
+    │ Stock Transfer
+    ▼
+Warehouse 10 (Consignacion)
+    └── Bin Location: 10-CECANOR (AbsEntry: 4)
+```
 
 ## Data Model Changes
 
@@ -48,20 +71,44 @@ Add SAP code reference to `productoModel.js`:
 ```
 
 ### Location Model Update
-Add SAP warehouse mapping to `locacionModel.js`:
+Add SAP mapping fields to `locacionModel.js`:
+
+**Current schema fields**: name, fullName, type, address, contact, stockLimits, settings, active, notes, createdBy, historia
+
+**NEW fields to add** (after `settings` block, around line 65):
 
 ```javascript
-{
-  // Existing fields...
-
-  // NEW: SAP warehouse mapping
-  sapWarehouseCode: {
+// SAP Business One Integration
+sapIntegration: {
+  warehouseCode: {
     type: String,
     sparse: true,
-    description: 'SAP B1 WarehouseCode (e.g., "01", "10")'
+    description: 'SAP B1 WarehouseCode - "01" for Principal, "10" for Consignacion warehouse'
   },
-}
+  binAbsEntry: {
+    type: Number,
+    sparse: true,
+    description: 'SAP B1 Bin Location AbsEntry - Required for CENTROs (e.g., 4 for CECANOR)'
+  },
+  binCode: {
+    type: String,
+    sparse: true,
+    description: 'SAP B1 Bin Location Code (e.g., "10-CECANOR") - for display/reference'
+  },
+},
 ```
+
+**Example mappings:**
+
+| Vasculares Location | Type | sapIntegration |
+|---------------------|------|----------------|
+| Almacén Principal | WAREHOUSE | `{ warehouseCode: "01" }` |
+| CECANOR | CENTRO | `{ warehouseCode: "10", binAbsEntry: 4, binCode: "10-CECANOR" }` |
+| Centro Medico Dom. | CENTRO | `{ warehouseCode: "10", binAbsEntry: 2, binCode: "10-CD" }` |
+| IDC | CENTRO | `{ warehouseCode: "10", binAbsEntry: 6, binCode: "10-IDC" }` |
+| HOMS | CENTRO | `{ warehouseCode: "10", binAbsEntry: 13, binCode: "10-HOMS" }` |
+
+**Note**: All CENTROs use warehouse "10" (Consignacion) but with different bin locations.
 
 ## Integration Architecture
 
@@ -209,11 +256,20 @@ POST /b1s/v1/StockTransfers
           "BatchNumber": "06253084",
           "Quantity": 2
         }
+      ],
+      "StockTransferLinesBinAllocations": [
+        {
+          "BinAbsEntry": 4,           // 10-CECANOR
+          "Quantity": 2,
+          "BinActionType": "batToWarehouse"
+        }
       ]
     }
   ]
 }
 ```
+
+**Note**: `BinAbsEntry` specifies which center (bin location) receives the stock within warehouse 10.
 
 **Files to modify:**
 - `server/models/consignacionModel.js` - Add sapDocNum field
@@ -284,6 +340,44 @@ SAP_B1_PASSWORD=hospal786
 - Insufficient stock in SAP → Block transfer, show available
 
 ## Migration Steps
+
+### Step 0: Map locations to SAP
+```javascript
+// Warehouse (no bin location needed)
+db.locaciones.updateOne(
+  { name: "Almacén Principal", type: "WAREHOUSE" },
+  { $set: { sapIntegration: { warehouseCode: "01" } } }
+);
+
+// Centers map to bin locations in warehouse 10
+db.locaciones.updateOne(
+  { name: "CECANOR", type: "CENTRO" },
+  { $set: { sapIntegration: {
+    warehouseCode: "10",
+    binAbsEntry: 4,
+    binCode: "10-CECANOR"
+  } } }
+);
+
+db.locaciones.updateOne(
+  { name: "Centro Medico Dominicano", type: "CENTRO" },
+  { $set: { sapIntegration: {
+    warehouseCode: "10",
+    binAbsEntry: 2,
+    binCode: "10-CD"
+  } } }
+);
+
+// Full list of SAP bin locations for reference:
+// AbsEntry | BinCode      | Description
+// 2        | 10-CD        | Centro Medico Dominicano
+// 4        | 10-CECANOR   | Cecanor
+// 6        | 10-IDC       | IDC
+// 13       | 10-HOMS      | HOMS
+// 14       | 10-HTPJB     | Hospital Tony Perez
+// 20       | 10-HJMCB     | Hospital JM Cabral
+// (see SAP BinLocations for complete list)
+```
 
 ### Step 1: Map existing products
 ```javascript
