@@ -109,4 +109,12 @@ export const inventarioObjetivosApi = {
   delete: (id) => api.delete(`/inventario-objetivos/${id}`),
 };
 
+// Consignaciones API (Bulk consignments)
+export const consignacionesApi = {
+  getAll: (params) => api.get('/consignaciones', { params }),
+  getOne: (id) => api.get(`/consignaciones/${id}`),
+  create: (data) => api.post('/consignaciones', data),
+  confirm: (id, data) => api.put(`/consignaciones/${id}/confirm`, data),
+};
+
 export default api;

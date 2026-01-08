@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { analyticsApi, locacionesApi, productosApi, inventarioObjetivosApi } from '../lib/api';
+import { analyticsApi, locacionesApi, productosApi, inventarioObjetivosApi, consignacionesApi } from '../lib/api';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../components/ui/card';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '../components/ui/dialog';
@@ -9,17 +9,20 @@ import { Input } from '../components/ui/input';
 import { Button } from '../components/ui/button';
 import { Badge } from '../components/ui/badge';
 import { useToast } from '../components/ui/toast';
-import { BarChart3, TrendingUp, AlertTriangle, CheckCircle2, Edit, Warehouse } from 'lucide-react';
+import { BarChart3, TrendingUp, AlertTriangle, CheckCircle2, Edit, Warehouse, Truck } from 'lucide-react';
 
 export default function Planning() {
   const [category, setCategory] = useState('all');
   const [location, setLocation] = useState('warehouse');
   const [editingProduct, setEditingProduct] = useState(null);
   const [editOpen, setEditOpen] = useState(false);
+  const [consignmentOpen, setConsignmentOpen] = useState(false);
+  const [consignmentItems, setConsignmentItems] = useState([]);
   const queryClient = useQueryClient();
   const { toast } = useToast();
 
   const isWarehouseView = location === 'warehouse';
+  const isCentroView = !isWarehouseView;
 
   const { data: locations } = useQuery({
     queryKey: ['locaciones'],
@@ -68,9 +71,53 @@ export default function Planning() {
     },
   });
 
+  // Mutation for creating consignment
+  const createConsignmentMutation = useMutation({
+    mutationFn: consignacionesApi.create,
+    onSuccess: () => {
+      queryClient.invalidateQueries(['planning-data']);
+      setConsignmentOpen(false);
+      setConsignmentItems([]);
+      toast.success('Consignación creada exitosamente');
+    },
+    onError: (error) => {
+      console.error('Consignment error:', error);
+      const message = error?.response?.data?.error || error?.message || 'Error al crear consignación';
+      toast.error(message);
+    },
+  });
+
   const handleEdit = (product) => {
     setEditingProduct(product);
     setEditOpen(true);
+  };
+
+  const handleCreateConsignment = () => {
+    const includedItems = consignmentItems.filter(item => item.included && item.quantityToSend > 0);
+
+    if (includedItems.length === 0) {
+      toast.warning('Selecciona al menos un producto para consignar');
+      return;
+    }
+
+    // Find warehouse location
+    const warehouseLocation = locations?.find(loc => loc.type === 'WAREHOUSE');
+    if (!warehouseLocation) {
+      toast.error('No se encontró almacén');
+      return;
+    }
+
+    const consignmentData = {
+      fromLocationId: warehouseLocation._id,
+      toLocationId: location,
+      items: includedItems.map(item => ({
+        productId: item.productId,
+        quantitySent: item.quantityToSend,
+      })),
+      notes: '',
+    };
+
+    createConsignmentMutation.mutate(consignmentData);
   };
 
   const handleSaveEdit = (e) => {
@@ -218,6 +265,28 @@ export default function Planning() {
         <CardHeader>
           <div className="flex items-center justify-between">
             <CardTitle>Filtros</CardTitle>
+            {isCentroView && (
+              <Button onClick={() => {
+                // Prepare consignment items from planning data
+                const items = (planningData || [])
+                  .filter(p => p.suggestedConsignment > 0 && p.warehouseStock > 0)
+                  .map(p => ({
+                    productId: p.productId,
+                    productName: p.name,
+                    productCode: p.code,
+                    size: p.size,
+                    suggestedConsignment: p.suggestedConsignment,
+                    warehouseStock: p.warehouseStock,
+                    quantityToSend: Math.min(p.suggestedConsignment, p.warehouseStock),
+                    included: true,
+                  }));
+                setConsignmentItems(items);
+                setConsignmentOpen(true);
+              }}>
+                <Truck className="mr-2 h-4 w-4" />
+                Crear Consignación
+              </Button>
+            )}
           </div>
         </CardHeader>
         <CardContent>
@@ -518,6 +587,110 @@ export default function Planning() {
           </DialogContent>
         </Dialog>
       )}
+
+      {/* Consignment Creation Dialog */}
+      <Dialog open={consignmentOpen} onOpenChange={setConsignmentOpen}>
+        <DialogContent className="max-w-4xl max-h-[80vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Crear Consignación</DialogTitle>
+            <DialogDescription>
+              Selecciona los productos y cantidades a consignar
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            {consignmentItems.length === 0 ? (
+              <div className="text-center py-8 text-muted-foreground">
+                No hay productos con necesidad de consignación
+              </div>
+            ) : (
+              <div className="border rounded-md">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b bg-muted/50">
+                      <th className="text-left p-2 w-12"></th>
+                      <th className="text-left p-2">Producto</th>
+                      <th className="text-left p-2">Tamaño</th>
+                      <th className="text-right p-2">Sugerido</th>
+                      <th className="text-right p-2">Disponible</th>
+                      <th className="text-right p-2">A Consignar</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {consignmentItems.map((item, index) => (
+                      <tr key={item.productId} className="border-b">
+                        <td className="p-2">
+                          <input
+                            type="checkbox"
+                            checked={item.included}
+                            onChange={(e) => {
+                              const newItems = [...consignmentItems];
+                              newItems[index].included = e.target.checked;
+                              setConsignmentItems(newItems);
+                            }}
+                            className="h-4 w-4"
+                          />
+                        </td>
+                        <td className="p-2">
+                          <div>
+                            <div className="font-medium">{item.productName}</div>
+                            <div className="text-xs text-muted-foreground">Código: {item.productCode}</div>
+                          </div>
+                        </td>
+                        <td className="p-2">{item.size}</td>
+                        <td className="p-2 text-right text-blue-600 font-medium">
+                          {item.suggestedConsignment}
+                        </td>
+                        <td className="p-2 text-right text-green-600 font-medium">
+                          {item.warehouseStock}
+                        </td>
+                        <td className="p-2 text-right">
+                          <Input
+                            type="number"
+                            min="0"
+                            max={Math.min(item.suggestedConsignment, item.warehouseStock)}
+                            value={item.quantityToSend}
+                            onChange={(e) => {
+                              const newItems = [...consignmentItems];
+                              newItems[index].quantityToSend = Math.max(0, parseInt(e.target.value) || 0);
+                              setConsignmentItems(newItems);
+                            }}
+                            className="w-20 text-right"
+                          />
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+            <div className="bg-muted/50 p-3 rounded-md">
+              <div className="flex justify-between text-sm font-medium">
+                <span>Total de productos seleccionados:</span>
+                <span>{consignmentItems.filter(i => i.included && i.quantityToSend > 0).length}</span>
+              </div>
+              <div className="flex justify-between text-sm font-medium">
+                <span>Total unidades a consignar:</span>
+                <span className="text-blue-600">
+                  {consignmentItems
+                    .filter(i => i.included)
+                    .reduce((sum, i) => sum + (i.quantityToSend || 0), 0)}
+                </span>
+              </div>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setConsignmentOpen(false)}>
+              Cancelar
+            </Button>
+            <Button
+              onClick={handleCreateConsignment}
+              disabled={createConsignmentMutation.isPending || consignmentItems.filter(i => i.included && i.quantityToSend > 0).length === 0}
+            >
+              {createConsignmentMutation.isPending ? 'Creando...' : 'Confirmar Consignación'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
