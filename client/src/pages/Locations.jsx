@@ -7,13 +7,16 @@ import { Label } from '../components/ui/label';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../components/ui/card';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from '../components/ui/dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select';
-import { Plus, MapPin, Building, Edit } from 'lucide-react';
+import { Plus, MapPin, Building, Edit, Trash2 } from 'lucide-react';
 import { useToast } from '../components/ui/toast';
 
 export default function Locations() {
   const [open, setOpen] = useState(false);
   const [editingLocation, setEditingLocation] = useState(null);
   const [selectedType, setSelectedType] = useState('');
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [locationToDelete, setLocationToDelete] = useState(null);
+  const [deleteConfirmText, setDeleteConfirmText] = useState('');
   const formRef = useRef(null);
   const queryClient = useQueryClient();
   const toast = useToast();
@@ -54,11 +57,40 @@ export default function Locations() {
     },
   });
 
+  const deleteMutation = useMutation({
+    mutationFn: (id) => locacionesApi.delete(id),
+    onSuccess: () => {
+      queryClient.invalidateQueries(['locaciones']);
+      handleCloseDeleteDialog();
+      toast.success('Locación eliminada exitosamente');
+    },
+    onError: (error) => {
+      toast.error(error.response?.data?.error || 'Error al eliminar locación');
+    },
+  });
+
   const handleCloseDialog = () => {
     setOpen(false);
     setEditingLocation(null);
     setSelectedType('');
     formRef.current?.reset();
+  };
+
+  const handleCloseDeleteDialog = () => {
+    setDeleteDialogOpen(false);
+    setLocationToDelete(null);
+    setDeleteConfirmText('');
+  };
+
+  const handleDeleteClick = (location) => {
+    setLocationToDelete(location);
+    setDeleteDialogOpen(true);
+  };
+
+  const handleConfirmDelete = () => {
+    if (deleteConfirmText.toLowerCase() === 'delete' && locationToDelete) {
+      deleteMutation.mutate(locationToDelete._id);
+    }
   };
 
   const handleDialogChange = (isOpen) => {
@@ -84,6 +116,7 @@ export default function Locations() {
     }
 
     const formData = new FormData(e.target);
+    const binAbsEntry = formData.get('sapBinAbsEntry');
     const data = {
       name: formData.get('name'),
       fullName: formData.get('fullName'),
@@ -92,6 +125,11 @@ export default function Locations() {
         name: formData.get('contactName'),
         phone: formData.get('contactPhone'),
         email: formData.get('contactEmail'),
+      },
+      sapIntegration: {
+        warehouseCode: formData.get('sapWarehouseCode') || null,
+        binAbsEntry: binAbsEntry ? parseInt(binAbsEntry, 10) : null,
+        binCode: formData.get('sapBinCode') || null,
       },
     };
 
@@ -180,6 +218,39 @@ export default function Locations() {
                     defaultValue={editingLocation?.contact?.email || ''}
                   />
                 </div>
+                <div className="grid gap-2">
+                  <Label className="text-muted-foreground">SAP Business One</Label>
+                  <div className="grid grid-cols-3 gap-2">
+                    <div>
+                      <Label htmlFor="sapWarehouseCode" className="text-xs">Almacén</Label>
+                      <Input
+                        id="sapWarehouseCode"
+                        name="sapWarehouseCode"
+                        placeholder="01"
+                        defaultValue={editingLocation?.sapIntegration?.warehouseCode || ''}
+                      />
+                    </div>
+                    <div>
+                      <Label htmlFor="sapBinAbsEntry" className="text-xs">Bin ID</Label>
+                      <Input
+                        id="sapBinAbsEntry"
+                        name="sapBinAbsEntry"
+                        type="number"
+                        placeholder="4"
+                        defaultValue={editingLocation?.sapIntegration?.binAbsEntry || ''}
+                      />
+                    </div>
+                    <div>
+                      <Label htmlFor="sapBinCode" className="text-xs">Bin Code</Label>
+                      <Input
+                        id="sapBinCode"
+                        name="sapBinCode"
+                        placeholder="10-CECANOR"
+                        defaultValue={editingLocation?.sapIntegration?.binCode || ''}
+                      />
+                    </div>
+                  </div>
+                </div>
               </div>
               <DialogFooter>
                 <Button type="button" variant="outline" onClick={handleCloseDialog}>
@@ -214,9 +285,19 @@ export default function Locations() {
                     <CardDescription>{location.fullName || location.name}</CardDescription>
                   </div>
                 </div>
-                <Button variant="ghost" size="sm" onClick={() => handleEdit(location)}>
-                  <Edit className="h-4 w-4" />
-                </Button>
+                <div className="flex gap-1">
+                  <Button variant="ghost" size="sm" onClick={() => handleEdit(location)}>
+                    <Edit className="h-4 w-4" />
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="text-destructive hover:text-destructive"
+                    onClick={() => handleDeleteClick(location)}
+                  >
+                    <Trash2 className="h-4 w-4" />
+                  </Button>
+                </div>
               </div>
             </CardHeader>
             <CardContent>
@@ -239,6 +320,22 @@ export default function Locations() {
                     <span className="font-medium">{location.contact.phone}</span>
                   </div>
                 )}
+                {location.sapIntegration?.binCode && (
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">SAP:</span>
+                    <span className="font-medium font-mono text-xs">
+                      {location.sapIntegration.binCode}
+                    </span>
+                  </div>
+                )}
+                {location.sapIntegration?.warehouseCode && !location.sapIntegration?.binCode && (
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">SAP Almacén:</span>
+                    <span className="font-medium font-mono text-xs">
+                      {location.sapIntegration.warehouseCode}
+                    </span>
+                  </div>
+                )}
               </div>
             </CardContent>
           </Card>
@@ -254,6 +351,46 @@ export default function Locations() {
           </CardContent>
         </Card>
       )}
+
+      {/* Delete Confirmation Dialog */}
+      <Dialog open={deleteDialogOpen} onOpenChange={(isOpen) => !isOpen && handleCloseDeleteDialog()}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Eliminar Locación</DialogTitle>
+            <DialogDescription>
+              ¿Estás seguro que deseas eliminar <strong>{locationToDelete?.name}</strong>?
+              Esta acción no se puede deshacer.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-4 py-4">
+            <div className="grid gap-2">
+              <Label htmlFor="deleteConfirm">
+                Escribe <span className="font-mono font-bold">delete</span> para confirmar:
+              </Label>
+              <Input
+                id="deleteConfirm"
+                value={deleteConfirmText}
+                onChange={(e) => setDeleteConfirmText(e.target.value)}
+                placeholder="delete"
+                autoComplete="off"
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={handleCloseDeleteDialog}>
+              Cancelar
+            </Button>
+            <Button
+              type="button"
+              variant="destructive"
+              onClick={handleConfirmDelete}
+              disabled={deleteConfirmText.toLowerCase() !== 'delete' || deleteMutation.isPending}
+            >
+              {deleteMutation.isPending ? 'Eliminando...' : 'Eliminar'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

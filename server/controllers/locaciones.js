@@ -76,6 +76,7 @@ exports.create = async (req, res, next) => {
       contact,
       stockLimits,
       settings,
+      sapIntegration,
       notes
     } = req.body;
 
@@ -93,6 +94,7 @@ exports.create = async (req, res, next) => {
       contact,
       stockLimits,
       settings,
+      sapIntegration,
       notes,
       active: true,
       createdBy: {
@@ -146,6 +148,7 @@ exports.update = async (req, res, next) => {
       contact,
       stockLimits,
       settings,
+      sapIntegration,
       notes,
       active
     } = req.body;
@@ -166,6 +169,7 @@ exports.update = async (req, res, next) => {
     if (contact !== undefined) locacion.contact = contact;
     if (stockLimits !== undefined) locacion.stockLimits = stockLimits;
     if (settings !== undefined) locacion.settings = settings;
+    if (sapIntegration !== undefined) locacion.sapIntegration = sapIntegration;
     if (notes !== undefined) locacion.notes = notes;
     if (active !== undefined) locacion.active = active;
 
