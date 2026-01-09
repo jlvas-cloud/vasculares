@@ -194,13 +194,37 @@ db.locaciones.updateOne(
 // ... repeat for all centers
 ```
 
+### Product Code Mapping Script
+
+**Purpose**: Create Orsiro Mission products and map them to legacy SAP codes.
+
+**Script**: `server/scripts/import-orsiro-codes.js`
+**Source Data**: `server/scripts/orsiro-codes.xlsx`
+
+This script:
+1. Reads the Excel file with new codes (419xxx) and legacy codes (364xxx)
+2. Creates products with `code` = new Orsiro Mission code
+3. Sets `sapItemCode` = new code (as string, for SAP API)
+4. Sets `legacyCode` = old Orsiro code (for reference when old inventory exists in SAP)
+
+**Usage**:
+```bash
+# Preview (no changes)
+node scripts/import-orsiro-codes.js --dry-run
+
+# Run import
+node scripts/import-orsiro-codes.js
+```
+
+**For Production**: Update `COMPANY_ID` in the script to the production company ID before running.
+
 ### Migration Checklist
 
+- [ ] Run `import-orsiro-codes.js` to create products with code mappings
 - [ ] Export inventory from SAP for Warehouse 01 (Principal)
 - [ ] Export inventory from SAP for Warehouse 10 (Consignacion) with bin locations
-- [ ] Combine into single Excel file or run script twice
-- [ ] Map all locations to SAP warehouse/bin codes
-- [ ] Run migration script
+- [ ] Map all locations to SAP warehouse/bin codes (MongoDB updates)
+- [ ] Run `migrate-from-sap-export.js` migration script
 - [ ] Verify totals match SAP
 
 ---
@@ -828,15 +852,17 @@ db.locaciones.updateOne(
 ### New Files
 ```
 server/
-├── services/sapService.js           # SAP API client with session management
-├── controllers/sap.js               # SAP endpoints (batch-stock, arrivals, sync)
-├── routes/sap.js                    # SAP API routes
-└── scripts/migrate-from-sap-export.js  # Initial migration script (reads Excel)
+├── services/sapService.js              # SAP API client with session management
+├── controllers/sap.js                  # SAP endpoints (batch-stock, arrivals, sync)
+├── routes/sap.js                       # SAP API routes
+├── scripts/import-orsiro-codes.js      # Product code mapping script (READY)
+├── scripts/orsiro-codes.xlsx           # Source: new codes → legacy codes (READY)
+└── scripts/migrate-from-sap-export.js  # Inventory migration script (reads Excel)
 
 client/src/
-├── pages/InventoryArrivals.jsx      # Arrivals sync page ("Sincronizar Entradas")
+├── pages/InventoryArrivals.jsx         # Arrivals sync page ("Sincronizar Entradas")
 └── components/consignment/
-    └── BatchSelector.jsx            # Lot selection component for consignments
+    └── BatchSelector.jsx               # Lot selection component for consignments
 ```
 
 ### Modified Files

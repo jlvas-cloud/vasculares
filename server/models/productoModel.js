@@ -16,9 +16,16 @@ const productoSchema = new Schema({
     required: true,
     unique: true,
   },
-  missionCode: {
+  // SAP Business One Integration
+  sapItemCode: {
+    type: String,
+    sparse: true,
+    description: 'SAP B1 ItemCode for API integration (same as code, as string)',
+  },
+  legacyCode: {
     type: Number,
     sparse: true,
+    description: 'Old Orsiro code equivalent - for reference when old inventory exists in SAP',
   },
   category: {
     type: String,
@@ -74,6 +81,8 @@ const productoSchema = new Schema({
 
 // Indexes for performance
 productoSchema.index({ code: 1 });
+productoSchema.index({ sapItemCode: 1 }, { sparse: true });
+productoSchema.index({ legacyCode: 1 }, { sparse: true });
 productoSchema.index({ category: 1, active: 1 });
 productoSchema.index({ name: 'text' }); // Text search
 
