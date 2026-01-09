@@ -138,6 +138,16 @@ export const goodsReceiptApi = {
   getHistory: (params) => api.get('/goods-receipt/history', { params }),
   getOne: (id) => api.get(`/goods-receipt/${id}`),
   retrySap: (id) => api.post(`/goods-receipt/${id}/retry-sap`),
+  // Packing list extraction
+  extract: (files) => {
+    const formData = new FormData();
+    files.forEach((file) => {
+      formData.append('files', file);
+    });
+    return api.post('/goods-receipt/extract', formData, {
+      headers: { 'Content-Type': 'multipart/form-data' }
+    });
+  },
 };
 
 export default api;

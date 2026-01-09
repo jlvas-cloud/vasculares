@@ -12,6 +12,7 @@ const {
   getGoodsReceiptsModel
 } = require('../getModel');
 const sapService = require('../services/sapService');
+const { extractPackingList } = require('../services/extractionService');
 
 /**
  * Helper: Update or create inventory record
@@ -613,5 +614,61 @@ exports.retrySapPush = async (req, res, next) => {
   } catch (error) {
     console.error('Error retrying SAP push:', error);
     next(error);
+  }
+};
+
+/**
+ * POST /api/goods-receipt/extract
+ * Extract product data from packing list images using Claude Vision
+ */
+exports.extractFromPackingList = async (req, res, next) => {
+  try {
+    // Check if files were uploaded
+    if (!req.files || req.files.length === 0) {
+      return res.status(400).json({ error: 'No files uploaded' });
+    }
+
+    console.log(`Extracting data from ${req.files.length} file(s)...`);
+
+    // Call the extraction service
+    const extractionResult = await extractPackingList(req.files);
+
+    // Enrich items with product database info
+    const Productos = await getProductosModel(req.companyId);
+    const enrichedItems = [];
+
+    for (const item of extractionResult.items) {
+      // Try to find product by code (as sapItemCode)
+      const codeStr = String(item.code);
+      let product = await Productos.findOne({
+        $or: [
+          { sapItemCode: codeStr },
+          { code: item.code }
+        ]
+      }).lean();
+
+      enrichedItems.push({
+        ...item,
+        sapItemCode: codeStr,
+        productId: product?._id || null,
+        productName: product?.name || item.name,
+        existsInDb: !!product
+      });
+    }
+
+    res.json({
+      success: true,
+      items: enrichedItems,
+      documentInfo: extractionResult.documentInfo || {},
+      warnings: extractionResult.warnings || [],
+      filesProcessed: extractionResult.filesProcessed
+    });
+
+  } catch (error) {
+    console.error('Error extracting from packing list:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message || 'Extraction failed'
+    });
   }
 };

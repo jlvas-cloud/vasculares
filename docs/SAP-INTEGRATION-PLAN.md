@@ -992,7 +992,7 @@ client/src/
 
 ---
 
-## Phase 2: Goods Receipt (App → SAP) ✅ PHASE 2a COMPLETE
+## Phase 2: Goods Receipt (App → SAP) ✅ COMPLETE (2a + 2b)
 
 ### Overview
 Instead of syncing FROM SAP, allow users to enter goods receipts IN the app and push TO SAP. This eliminates double data entry.
@@ -1137,11 +1137,35 @@ sapIntegration: {
 - After SAP push attempt, updates all transactions with sync status
 - Local inventory is always saved (even if SAP fails) - data safety pattern
 
-#### Phase 2b: Packing List Upload (Pending)
-- [ ] Upload PDF/image of packing list
-- [ ] Extract data (Centralmed/Biotronik format - always same)
-- [ ] Review/edit extracted data
-- [ ] Confirm → Save local + Push to SAP
+#### Phase 2b: Packing List Upload ✅ COMPLETE (2026-01-09)
+
+Integrated into existing Recepcion page with tabs: "Manual" | "Desde Packing List"
+
+**New Files:**
+- `server/middleware/upload.js` - Multer config for file uploads
+- `server/services/extractionService.js` - Claude Vision API integration
+- `client/src/components/FileUploader.jsx` - Drag & drop upload component
+
+**Modified Files:**
+- `server/controllers/goodsReceipt.js` - Added `extractFromPackingList` endpoint
+- `server/routes/goodsReceipt.js` - Added `POST /extract` route
+- `client/src/pages/GoodsReceipt.jsx` - Added tabs, file upload UI, extraction flow
+- `client/src/lib/api.js` - Added `goodsReceiptApi.extract()` method
+
+**Dependencies:**
+- `@anthropic-ai/sdk` - Claude Vision API
+- `multer` - File upload handling
+- `react-dropzone` - Drag & drop UI
+
+**Features:**
+- [x] Upload images of packing list (drag & drop)
+- [x] Extract data using Claude Vision API
+- [x] Show extracted items in editable table
+- [x] Review/edit extracted data (lot numbers, quantities, dates)
+- [x] Shows "OK" badge for existing products, "Nuevo" for unknown
+- [x] Same submit flow → Save local + Push to SAP
+
+**See:** `docs/PACKING-LIST-UPLOAD-PLAN.md` for full details
 
 ### Configured Suppliers
 

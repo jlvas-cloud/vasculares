@@ -3,6 +3,7 @@ const router = express.Router();
 const goodsReceiptController = require('../controllers/goodsReceipt');
 const { verifyUser, getCompanyId } = require('../util/authenticate');
 const { body } = require('express-validator');
+const { packingListUpload, handleUploadError } = require('../middleware/upload');
 
 // All routes require authentication
 router.use(verifyUser, getCompanyId);
@@ -21,6 +22,9 @@ const validateGoodsReceipt = [
 router.get('/products', goodsReceiptController.getProductsForReceipt);
 router.get('/warehouses', goodsReceiptController.getWarehouses);
 router.post('/', validateGoodsReceipt, goodsReceiptController.createGoodsReceipt);
+
+// Packing list extraction (Claude Vision)
+router.post('/extract', packingListUpload, handleUploadError, goodsReceiptController.extractFromPackingList);
 
 // History and management
 router.get('/history', goodsReceiptController.listGoodsReceipts);

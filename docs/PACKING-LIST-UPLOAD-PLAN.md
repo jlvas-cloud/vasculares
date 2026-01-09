@@ -1,233 +1,142 @@
-# Feature Plan: Packing List Upload & Import
+# Feature: Packing List Upload & Import
+
+## Status: ✅ IMPLEMENTED (2026-01-09)
 
 ## Overview
-Allow users to upload packing list images (from suppliers like BIOTRONIK) and automatically extract product/lot data using AI vision, then import into the inventory system.
+Upload packing list images (from suppliers like BIOTRONIK/Centralmed) and automatically extract product/lot data using Claude Vision API, then create goods receipt with SAP integration.
 
-## Current State (Completed)
-- ✅ Manual import script: `server/scripts/import-packing-list.js`
-- ✅ JSON data structure: `server/scripts/packing-list-data.json`
-- ✅ Tested with real BIOTRONIK packing list (38 products, 83 units)
-- ✅ Product, Lote, Inventario models ready
+## Implementation
 
-## User Flow
+### Approach
+Instead of creating a separate page, the feature was integrated into the existing **Recepcion** page (`/goods-receipt`) with tabs:
+- **Manual** - Original manual entry form
+- **Desde Packing List** - Upload images → Extract → Review → Submit
+
+### User Flow
 ```
-1. User navigates to "Recepción de Inventario" page
-2. User uploads packing list images (drag & drop or file picker)
-3. System shows "Processing..." while AI extracts data
-4. Extracted data appears in editable table for review
-5. User corrects any errors, confirms quantities
-6. User clicks "Importar"
-7. System creates products/lotes, shows success summary
+1. User goes to "Recepcion" page
+2. Sees tabs: "Manual" | "Desde Packing List"
+3. If "Desde Packing List":
+   a. User selects warehouse and supplier (shared with manual tab)
+   b. User uploads images (drag & drop or file picker)
+   c. Click "Extraer Datos" → Claude Vision extracts data
+   d. Extracted items appear in editable table
+   e. User reviews/edits data (fix OCR errors, adjust quantities)
+   f. Click "Crear Recepcion" → same flow as manual
+4. Success dialog shows SAP DocNum
 ```
 
-## Technical Architecture
-
-### Frontend
-```
-client/src/pages/InventoryReceipt.jsx (new page)
-├── ImageUploader component (drag & drop, multiple files)
-├── ExtractionPreview component (editable table)
-├── ImportSummary component (results modal)
-└── Hooks: useExtractPackingList, useImportInventory
-```
+## Files Created
 
 ### Backend
-```
-server/controllers/inventoryReceipt.js (new controller)
-├── POST /api/inventory-receipt/extract
-│   - Receives images (multipart/form-data)
-│   - Calls Claude Vision API
-│   - Returns extracted JSON
-│
-└── POST /api/inventory-receipt/import
-    - Receives reviewed JSON
-    - Creates products/lotes/inventory
-    - Returns import summary
-```
+| File | Purpose |
+|------|---------|
+| `server/middleware/upload.js` | Multer config for file uploads |
+| `server/services/extractionService.js` | Claude Vision API integration |
 
-## Data Structures
+### Frontend
+| File | Purpose |
+|------|---------|
+| `client/src/components/FileUploader.jsx` | Drag & drop upload component |
 
-### Extraction Request
-```javascript
-// POST /api/inventory-receipt/extract
-// Content-Type: multipart/form-data
-{
-  images: [File, File, ...],  // JPEG/PNG files
-  supplier: "BIOTRONIK AG"    // Optional hint for AI
-}
+## Files Modified
+
+| File | Changes |
+|------|---------|
+| `server/controllers/goodsReceipt.js` | Added `extractFromPackingList` endpoint |
+| `server/routes/goodsReceipt.js` | Added `POST /extract` route |
+| `client/src/pages/GoodsReceipt.jsx` | Added tabs, file upload UI, extraction flow |
+| `client/src/lib/api.js` | Added `goodsReceiptApi.extract()` method |
+
+## API Endpoint
+
+**POST /api/goods-receipt/extract**
 ```
+Content-Type: multipart/form-data
 
-### Extraction Response (AI Output)
-```javascript
+Request:
+- files: File[] (images, max 10 files, max 10MB each)
+
+Response:
 {
   success: true,
-  packingList: {
-    documentNumber: "57364055",
-    date: "2025-11-10",
-    supplier: "BIOTRONIK AG",
-    detectedPages: 7
-  },
   items: [
     {
       code: 419113,
       name: "Orsiro Mission 2.25/15",
-      diameter: 2.25,
-      length: 15,
+      sapItemCode: "419113",
       lotNumber: "06253084",
       expiryDate: "2028-07-09",
       quantity: 1,
-      confidence: 0.95,        // AI confidence score
-      existsInDb: false        // Check if product already exists
-    },
-    // ... more items
+      productId: "..." | null,  // If product exists in DB
+      existsInDb: true | false
+    }
   ],
-  warnings: [
-    "Page 3: One item had unclear lot number"
-  ]
+  warnings: ["Page 3: unclear lot number"],
+  filesProcessed: 5
 }
 ```
 
-### Import Request
-```javascript
-// POST /api/inventory-receipt/import
-{
-  packingList: {
-    documentNumber: "57364055",
-    supplier: "BIOTRONIK AG",
-    receivedDate: "2025-11-20"
-  },
-  items: [
-    // Same structure as extraction, user may have edited values
-  ],
-  warehouseId: "optional - defaults to main warehouse"
-}
+## Dependencies Installed
+
+### Server
+```bash
+npm install @anthropic-ai/sdk multer
 ```
 
-### Import Response
-```javascript
-{
-  success: true,
-  summary: {
-    productsCreated: 38,
-    productsExisted: 0,
-    lotesCreated: 38,
-    totalUnits: 83
-  },
-  items: [
-    { code: 419113, name: "...", status: "created", loteId: "..." },
-    // ...
-  ]
-}
-```
-
-## Claude Vision API Prompt
-
-```javascript
-const extractionPrompt = `Analyze this packing list image and extract all product items.
-
-For each item, extract:
-- code: The article/product code (number)
-- name: Full product name (e.g., "Orsiro Mission 2.25/15")
-- diameter: Numeric diameter in mm (e.g., 2.25)
-- length: Numeric length in mm (e.g., 15)
-- lotNumber: The lot/batch number
-- expiryDate: Expiry date in YYYY-MM-DD format (convert from UBD dd.mm.yyyy)
-- quantity: Number of units (look for "X PZS")
-
-Also extract document metadata:
-- documentNumber: The document/receipt number
-- date: Document date in YYYY-MM-DD format
-- supplier: Supplier name
-
-Return valid JSON only, no markdown. Use this structure:
-{
-  "packingList": { "documentNumber": "", "date": "", "supplier": "" },
-  "items": [{ "code": 0, "name": "", "diameter": 0, "length": 0, "lotNumber": "", "expiryDate": "", "quantity": 0 }]
-}`;
-```
-
-## Implementation Steps
-
-### Phase 1: Backend API
-1. Create `server/controllers/inventoryReceipt.js`
-2. Add multer middleware for image uploads
-3. Implement `/extract` endpoint with Claude Vision API
-4. Implement `/import` endpoint (reuse logic from script)
-5. Add routes to `server/routes.js`
-
-### Phase 2: Frontend UI
-1. Create `InventoryReceipt.jsx` page
-2. Build `ImageUploader` component with react-dropzone
-3. Build `ExtractionPreview` editable table
-4. Add mutations with React Query
-5. Add route to App.jsx
-
-### Phase 3: Polish
-1. Add loading states and progress indicators
-2. Handle errors gracefully (retry extraction, highlight issues)
-3. Add confidence indicators (highlight low-confidence extractions)
-4. Add "Save as draft" for large imports
-5. Add transaction logging for audit trail
-
-## Dependencies
-
-### Backend
-```javascript
-// Already installed
-"@anthropic-ai/sdk": "latest"  // Or use existing setup
-"multer": "^1.4.5"             // For file uploads (may need to install)
-```
-
-### Frontend
-```javascript
-"react-dropzone": "^14.x"      // For drag & drop (may need to install)
+### Client
+```bash
+npm install react-dropzone
 ```
 
 ## Environment Variables
 ```
-ANTHROPIC_API_KEY=sk-ant-...   // For Claude Vision API
+ANTHROPIC_API_KEY=sk-ant-...   # Required for Claude Vision API
+```
+
+## Technical Details
+
+### Claude Vision Integration
+- Model: `claude-sonnet-4-20250514`
+- Max tokens: 8192
+- Images sent as base64
+- Prompt optimized for BIOTRONIK packing lists
+
+### File Upload Limits
+- Max file size: 10MB per file
+- Max files: 10 per upload
+- Allowed types: JPEG, PNG, GIF, WEBP (PDF planned for future)
+
+### Extraction Prompt
+```
+Analyze these packing list images and extract all product items.
+
+For each item, extract:
+- code: Article/product code (number, e.g., 419113)
+- name: Full product name (e.g., "Orsiro Mission 2.25/15")
+- lotNumber: Lot/batch number (e.g., "06253084")
+- expiryDate: Expiry date in YYYY-MM-DD format
+- quantity: Number of units
+
+Return valid JSON only:
+{
+  "items": [...],
+  "warnings": []
+}
 ```
 
 ## Cost Estimate
-- Claude Vision: ~$0.01-0.02 per image
-- Typical packing list (7 pages): ~$0.10-0.15 per import
-- Monthly estimate (10 imports): ~$1-2/month
-
-## Security Considerations
-- Validate file types (only allow JPEG, PNG, PDF)
-- Limit file size (max 10MB per image)
-- Sanitize extracted data before database insert
-- Rate limit extraction endpoint
-- Store API key securely (not in frontend)
+- Claude Sonnet vision: ~$0.003 per 1K input tokens for images
+- Typical packing list (5-7 images): ~$0.05-0.15 per extraction
+- Monthly estimate (20 imports): ~$2-3/month
 
 ## Future Enhancements
-- PDF support (extract pages as images)
-- Multiple supplier templates (BIOTRONIK, Medtronic, etc.)
-- Batch import history with undo
-- Email notification on large imports
-- Auto-detect supplier from document header
-- Learn from corrections to improve extraction
+- [ ] PDF support (convert pages to images)
+- [ ] Multiple supplier templates
+- [ ] Confidence scores per field
+- [ ] Learn from corrections
+- [ ] Batch import history
 
-## Files to Create
-```
-server/
-├── controllers/inventoryReceipt.js    # New controller
-├── routes/inventoryReceipt.js         # New routes
-└── middleware/upload.js               # Multer config (if not exists)
-
-client/src/
-├── pages/InventoryReceipt.jsx         # Main page
-├── components/inventory/
-│   ├── ImageUploader.jsx              # Drag & drop component
-│   ├── ExtractionPreview.jsx          # Editable table
-│   └── ImportSummary.jsx              # Results modal
-└── hooks/
-    └── useInventoryReceipt.js         # API hooks
-```
-
-## Reference: Working Import Logic
-See `server/scripts/import-packing-list.js` for tested import logic:
-- Product find-or-create by code
-- Lote creation with all fields
-- Inventory aggregation update
-- Transaction logging
+## Related Documentation
+- `docs/SAP-INTEGRATION-PLAN.md` - SAP integration details
+- `server/scripts/packing-list-data.json` - Sample extracted data format
