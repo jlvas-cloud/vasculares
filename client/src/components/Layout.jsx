@@ -1,7 +1,7 @@
 import { Link, useLocation } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { Button } from './ui/button';
-import { Package, MapPin, TrendingUp, Settings, LogOut, Home, Boxes, History, BarChart3, Truck, Download, PackagePlus } from 'lucide-react';
+import { Package, MapPin, TrendingUp, Settings, LogOut, Home, Boxes, History, BarChart3, Truck, PackagePlus } from 'lucide-react';
 
 export default function Layout({ children }) {
   const { user, company, logout } = useAuth();
@@ -14,7 +14,6 @@ export default function Layout({ children }) {
     { name: 'Inventario', href: '/inventory', icon: Boxes },
     { name: 'Planificación', href: '/planning', icon: BarChart3 },
     { name: 'Consignaciones', href: '/consignaciones', icon: Truck },
-    { name: 'Llegadas SAP', href: '/sap-arrivals', icon: Download },
     { name: 'Recepcion', href: '/goods-receipt', icon: PackagePlus },
     { name: 'Recibir (Local)', href: '/warehouse-receipt', icon: TrendingUp },
     { name: 'Consignación', href: '/consignment', icon: TrendingUp },

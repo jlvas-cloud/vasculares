@@ -678,30 +678,18 @@ Import current SAP inventory to bootstrap the system using Excel export.
 
 **Note:** Script expects CSV format. For Excel files, save as CSV first or add xlsx package.
 
-### Phase 4: Arrival Sync (Sincronizar Entradas) ✅ PARTIALLY DONE
-Sync new product arrivals from SAP to vasculares.
+### Phase 4: Arrival Sync (Sincronizar Entradas) ❌ REMOVED
+~~Sync new product arrivals from SAP to vasculares.~~
 
-**User Flow:**
-1. Warehouse staff creates Goods Receipt in SAP (product delivery)
-2. User clicks "Sincronizar Entradas" in vasculares
-3. App queries SAP for recent PurchaseDeliveryNotes
-4. User reviews and selects items to import
-5. System creates Lotes and updates inventory
+**Decision**: Instead of pulling arrivals FROM SAP, we now push goods receipts TO SAP from the app (Phase 2a). This eliminates double data entry and ensures the app is the source of truth for incoming inventory.
 
-**Files created:**
-- `server/controllers/sap.js` - SAP API endpoints including arrivals ✅
-- `server/routes/sap.js` - Routes ✅
-- `client/src/pages/SapArrivals.jsx` - Arrivals sync page ✅
-- `client/src/lib/api.js` - Added sapApi client ✅
+**Removed files:**
+- ~~`client/src/pages/SapArrivals.jsx`~~ - Deleted
+- `server/controllers/sap.js` - Removed `getArrivals` endpoint
+- `server/routes/sap.js` - Removed `/arrivals` route
+- `client/src/lib/api.js` - Removed `sapApi.getArrivals`
 
-**API Endpoints:**
-- `GET /api/sap/arrivals?since={date}&supplier={cardCode}` - Get recent goods receipts ✅
-- `POST /api/sap/arrivals/sync` - Import selected arrivals (pending)
-
-**⚠️ Known Issue: BatchNumbers Not Embedded**
-SAP PurchaseDeliveryNotes do NOT embed BatchNumbers in the response. Batches exist in the separate `BatchNumberDetails` table. Current implementation shows arrivals with line quantities but batch info shows as "N/A".
-
-**To get actual batch info:** Need to query BatchNumberDetails table for each item/document. This is a future enhancement.
+**Replacement**: Use "Recepcion" page (`/goods-receipt`) which creates local inventory AND pushes to SAP PurchaseDeliveryNotes in one step.
 
 ### Phase 5: Batch/Lot Visibility
 Show SAP batch stock in consignment UI.
@@ -911,16 +899,18 @@ db.locaciones.updateOne(
 ```
 server/
 ├── services/sapService.js              # SAP API client with session management ✅ DONE
-├── controllers/sap.js                  # SAP endpoints (batch-stock, arrivals, sync) ✅ DONE
+├── controllers/sap.js                  # SAP endpoints (batch-stock, stock-transfer) ✅ DONE
+├── controllers/goodsReceipt.js         # Goods receipt with SAP push ✅ DONE
 ├── routes/sap.js                       # SAP API routes ✅ DONE
+├── routes/goodsReceipt.js              # Goods receipt routes ✅ DONE
 ├── scripts/import-orsiro-codes.js      # Product code mapping script ✅ DONE
 ├── scripts/orsiro-codes.xlsx           # Source: new codes → legacy codes ✅ DONE
 ├── scripts/import-centros.js           # Centro/location import script ✅ DONE
 └── scripts/migrate-from-sap-export.js  # Inventory migration script (reads CSV) ✅ DONE
 
 client/src/
-├── pages/SapArrivals.jsx               # Arrivals sync page ("Llegadas SAP") ✅ DONE
-├── lib/api.js                          # Added sapApi client ✅ DONE
+├── pages/GoodsReceipt.jsx              # Goods receipt page (App → SAP) ✅ DONE
+├── lib/api.js                          # Added sapApi, goodsReceiptApi clients ✅ DONE
 └── components/consignment/
     └── BatchSelector.jsx               # Lot selection component for consignments (pending)
 ```
@@ -974,12 +964,12 @@ client/src/
 9. ⬜ Run `migrate-from-sap-export.js` script with CSV file
 10. ⬜ Verify inventory totals match SAP
 
-### Arrival Sync Feature ✅ MOSTLY DONE
-11. ✅ Build Arrival Sync page (`SapArrivals.jsx`)
-12. ✅ Add SAP API client (`sapApi` in api.js)
-13. ✅ Arrivals display working with supplier/date filters
-14. ✅ Query BatchNumberDetails for batch info (see `docs/SAP-BATCH-TRACKING.md`)
-15. ⬜ Test import functionality (warehouse receipt creation)
+### Goods Receipt Feature ✅ COMPLETE
+11. ✅ Build Goods Receipt page (`GoodsReceipt.jsx`)
+12. ✅ Add goodsReceiptApi client in api.js
+13. ✅ Push to SAP PurchaseDeliveryNotes (Entrada de Mercancía)
+14. ✅ SAP sync status tracking on transactions
+15. ✅ Transaction History shows SAP status badges + filter
 
 ### Feature Development (Remaining)
 16. ⬜ Build BatchSelector component for consignment modal

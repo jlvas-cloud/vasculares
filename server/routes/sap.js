@@ -26,7 +26,4 @@ router.get('/inventory', sapController.getInventoryForPlanning);
 // Stock transfers (used by consignaciones)
 router.post('/stock-transfer', sapController.createStockTransfer);
 
-// Arrivals sync (for future use)
-router.get('/arrivals', sapController.getArrivals);
-
 module.exports = router;
