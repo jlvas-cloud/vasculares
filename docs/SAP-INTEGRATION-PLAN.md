@@ -8,6 +8,7 @@ Integrate vasculares app with SAP B1 to create stock transfers directly from the
 - **New products**: Orsiro Mission (new codes like 419113)
 - **Transition**: All future products will be Orsiro Mission
 - **Requirement**: Products need reference to legacy SAP code for mapping
+- **Tracked Supplier**: Centralmed (SAP CardCode: P00031)
 
 ---
 
@@ -660,7 +661,7 @@ Import current SAP inventory to bootstrap the system using Excel export.
 
 **Note:** Script expects CSV format. For Excel files, save as CSV first or add xlsx package.
 
-### Phase 4: Arrival Sync (Sincronizar Entradas)
+### Phase 4: Arrival Sync (Sincronizar Entradas) ✅ PARTIALLY DONE
 Sync new product arrivals from SAP to vasculares.
 
 **User Flow:**
@@ -670,14 +671,20 @@ Sync new product arrivals from SAP to vasculares.
 4. User reviews and selects items to import
 5. System creates Lotes and updates inventory
 
-**Files to create:**
-- `server/controllers/sap.js` - SAP API endpoints including arrivals
-- `server/routes/sap.js` - Routes
-- `client/src/pages/InventoryArrivals.jsx` - Arrivals sync page
+**Files created:**
+- `server/controllers/sap.js` - SAP API endpoints including arrivals ✅
+- `server/routes/sap.js` - Routes ✅
+- `client/src/pages/SapArrivals.jsx` - Arrivals sync page ✅
+- `client/src/lib/api.js` - Added sapApi client ✅
 
 **API Endpoints:**
-- `GET /api/sap/arrivals?since={date}` - Get recent goods receipts
-- `POST /api/sap/arrivals/sync` - Import selected arrivals
+- `GET /api/sap/arrivals?since={date}&supplier={cardCode}` - Get recent goods receipts ✅
+- `POST /api/sap/arrivals/sync` - Import selected arrivals (pending)
+
+**⚠️ Known Issue: BatchNumbers Not Embedded**
+SAP PurchaseDeliveryNotes do NOT embed BatchNumbers in the response. Batches exist in the separate `BatchNumberDetails` table. Current implementation shows arrivals with line quantities but batch info shows as "N/A".
+
+**To get actual batch info:** Need to query BatchNumberDetails table for each item/document. This is a future enhancement.
 
 ### Phase 5: Batch/Lot Visibility
 Show SAP batch stock in consignment UI.
@@ -887,17 +894,18 @@ db.locaciones.updateOne(
 ```
 server/
 ├── services/sapService.js              # SAP API client with session management ✅ DONE
-├── controllers/sap.js                  # SAP endpoints (batch-stock, arrivals, sync)
-├── routes/sap.js                       # SAP API routes
+├── controllers/sap.js                  # SAP endpoints (batch-stock, arrivals, sync) ✅ DONE
+├── routes/sap.js                       # SAP API routes ✅ DONE
 ├── scripts/import-orsiro-codes.js      # Product code mapping script ✅ DONE
 ├── scripts/orsiro-codes.xlsx           # Source: new codes → legacy codes ✅ DONE
 ├── scripts/import-centros.js           # Centro/location import script ✅ DONE
 └── scripts/migrate-from-sap-export.js  # Inventory migration script (reads CSV) ✅ DONE
 
 client/src/
-├── pages/InventoryArrivals.jsx         # Arrivals sync page ("Sincronizar Entradas")
+├── pages/SapArrivals.jsx               # Arrivals sync page ("Llegadas SAP") ✅ DONE
+├── lib/api.js                          # Added sapApi client ✅ DONE
 └── components/consignment/
-    └── BatchSelector.jsx               # Lot selection component for consignments
+    └── BatchSelector.jsx               # Lot selection component for consignments (pending)
 ```
 
 ### Modified Files
@@ -906,13 +914,14 @@ server/
 ├── models/productoModel.js          # Add sapItemCode, legacyCode fields ✅ DONE
 ├── models/locacionModel.js          # Add sapIntegration object ✅ DONE
 ├── models/consignacionModel.js      # Add sapDocNum, sapTransferStatus, loteId/lotNumber ✅ DONE
-├── controllers/consignaciones.js    # Call SAP StockTransfer on create
-└── routes.js                        # Add SAP routes
+├── controllers/consignaciones.js    # Call SAP StockTransfer on create (pending)
+└── routes.js                        # Add SAP routes ✅ DONE
 
 client/src/
 ├── pages/Locations.jsx              # SAP integration fields in form ✅ DONE
-├── pages/Planning.jsx               # Batch selector in consignment modal
-└── App.jsx                          # Add route for InventoryArrivals
+├── pages/Planning.jsx               # Batch selector in consignment modal (partially done)
+├── components/Layout.jsx            # Added "Llegadas SAP" menu item ✅ DONE
+└── App.jsx                          # Add route for SapArrivals ✅ DONE
 ```
 
 ## Implementation Order
@@ -932,7 +941,7 @@ client/src/
 ### Immediate (Setup) ✅ DONE
 1. ✅ Add SAP credentials to `.env` file
 2. ✅ Create `server/services/sapService.js` with login/session management
-3. ⬜ Test SAP connection and basic API calls (need SAP_B1_PASSWORD)
+3. ✅ Test SAP connection and basic API calls
 
 ### Data Model Updates ✅ DONE
 4. ✅ Update `productoModel.js` with sapItemCode, legacyCode fields
@@ -945,11 +954,24 @@ client/src/
 9. ⬜ Run `migrate-from-sap-export.js` script with CSV file
 10. ⬜ Verify inventory totals match SAP
 
-### Feature Development
-11. ⬜ Build Arrival Sync page (`InventoryArrivals.jsx`)
-12. ⬜ Build BatchSelector component for consignment modal
-13. ⬜ Integrate SAP StockTransfer creation on consignment confirm
+### Arrival Sync Feature ✅ PARTIALLY DONE
+11. ✅ Build Arrival Sync page (`SapArrivals.jsx`)
+12. ✅ Add SAP API client (`sapApi` in api.js)
+13. ✅ Arrivals display working with supplier/date filters
+14. ⬜ **Enhancement needed:** Query BatchNumberDetails for actual batch info (currently shows N/A)
+15. ⬜ Test import functionality (warehouse receipt creation)
+
+### Feature Development (Remaining)
+16. ⬜ Build BatchSelector component for consignment modal
+17. ⬜ Integrate SAP StockTransfer creation on consignment confirm
+18. ⬜ Planning page lot selection (partially implemented)
 
 ### Validation
-14. ⬜ Test full workflow: Arrival → Consignment → SAP Transfer
-15. ⬜ Verify inventory matches SAP after each operation
+19. ⬜ Test full workflow: Arrival → Consignment → SAP Transfer
+20. ⬜ Verify inventory matches SAP after each operation
+21. ⬜ Switch to production SAP database for real testing
+
+### Known Issues to Address
+- SAP test database (HOSPAL_TESTING) only has data up to July 2024
+- PurchaseDeliveryNotes don't embed BatchNumbers - need separate query to BatchNumberDetails table
+- Items have `ManageBatchNumbers: "tYES"` but batches stored separately

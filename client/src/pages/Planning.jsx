@@ -1,6 +1,6 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { analyticsApi, locacionesApi, productosApi, inventarioObjetivosApi, consignacionesApi } from '../lib/api';
+import { analyticsApi, locacionesApi, productosApi, inventarioObjetivosApi, consignacionesApi, inventarioApi } from '../lib/api';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../components/ui/card';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '../components/ui/dialog';
@@ -9,7 +9,7 @@ import { Input } from '../components/ui/input';
 import { Button } from '../components/ui/button';
 import { Badge } from '../components/ui/badge';
 import { useToast } from '../components/ui/toast';
-import { BarChart3, TrendingUp, AlertTriangle, CheckCircle2, Edit, Warehouse, Truck, Loader2, Check } from 'lucide-react';
+import { BarChart3, TrendingUp, AlertTriangle, CheckCircle2, Edit, Warehouse, Truck, Loader2, Check, Package, ChevronDown, ChevronRight } from 'lucide-react';
 
 export default function Planning() {
   const [category, setCategory] = useState('all');
@@ -18,6 +18,9 @@ export default function Planning() {
   const [editOpen, setEditOpen] = useState(false);
   const [consignmentOpen, setConsignmentOpen] = useState(false);
   const [consignmentItems, setConsignmentItems] = useState([]);
+  const [expandedProducts, setExpandedProducts] = useState({});
+  const [warehouseLots, setWarehouseLots] = useState({});
+  const [loadingLots, setLoadingLots] = useState(false);
   const queryClient = useQueryClient();
   const toast = useToast();
 
@@ -99,10 +102,70 @@ export default function Planning() {
     setEditOpen(true);
   };
 
-  const handleCreateConsignment = () => {
-    const includedItems = consignmentItems.filter(item => item.included && item.quantityToSend > 0);
+  // Load lots for warehouse when opening consignment dialog
+  const loadWarehouseLots = async (warehouseId, productIds) => {
+    setLoadingLots(true);
+    try {
+      const response = await inventarioApi.getLotesByLocation(warehouseId);
+      const lots = response.data;
 
-    if (includedItems.length === 0) {
+      // Group lots by product
+      const lotsByProduct = {};
+      for (const lot of lots) {
+        const productId = lot.productId?._id || lot.productId;
+        if (!lotsByProduct[productId]) {
+          lotsByProduct[productId] = [];
+        }
+        // Only include active lots with available quantity
+        if (lot.status === 'ACTIVE' && lot.quantityAvailable > 0) {
+          lotsByProduct[productId].push({
+            _id: lot._id,
+            lotNumber: lot.lotNumber,
+            quantityAvailable: lot.quantityAvailable,
+            expiryDate: lot.expiryDate,
+            quantityToSend: 0,
+          });
+        }
+      }
+      setWarehouseLots(lotsByProduct);
+    } catch (error) {
+      console.error('Error loading warehouse lots:', error);
+      toast.error('Error cargando lotes del almacén');
+    } finally {
+      setLoadingLots(false);
+    }
+  };
+
+  const handleCreateConsignment = () => {
+    // Build items from lot selections
+    const items = [];
+
+    for (const item of consignmentItems) {
+      if (!item.included) continue;
+
+      const productLots = warehouseLots[item.productId] || [];
+      const lotsWithQuantity = productLots.filter(lot => lot.quantityToSend > 0);
+
+      if (lotsWithQuantity.length > 0) {
+        // Add each lot as a separate item
+        for (const lot of lotsWithQuantity) {
+          items.push({
+            productId: item.productId,
+            loteId: lot._id,
+            lotNumber: lot.lotNumber,
+            quantitySent: lot.quantityToSend,
+          });
+        }
+      } else if (item.quantityToSend > 0) {
+        // Fallback to FIFO allocation (backend will handle)
+        items.push({
+          productId: item.productId,
+          quantitySent: item.quantityToSend,
+        });
+      }
+    }
+
+    if (items.length === 0) {
       toast.warning('Selecciona al menos un producto para consignar');
       return;
     }
@@ -117,10 +180,7 @@ export default function Planning() {
     const consignmentData = {
       fromLocationId: warehouseLocation._id,
       toLocationId: location,
-      items: includedItems.map(item => ({
-        productId: item.productId,
-        quantitySent: item.quantityToSend,
-      })),
+      items,
       notes: '',
     };
 
@@ -273,7 +333,14 @@ export default function Planning() {
           <div className="flex items-center justify-between">
             <CardTitle>Filtros</CardTitle>
             {isCentroView && (
-              <Button onClick={() => {
+              <Button onClick={async () => {
+                // Find warehouse location first
+                const warehouseLocation = locations?.find(loc => loc.type === 'WAREHOUSE');
+                if (!warehouseLocation) {
+                  toast.error('No se encontró almacén');
+                  return;
+                }
+
                 // Prepare consignment items from planning data
                 const items = (planningData || [])
                   .filter(p => p.suggestedConsignment > 0 && p.warehouseStock > 0)
@@ -288,7 +355,12 @@ export default function Planning() {
                     included: true,
                   }));
                 setConsignmentItems(items);
+                setExpandedProducts({});
+                setWarehouseLots({});
                 setConsignmentOpen(true);
+
+                // Load lots from warehouse
+                await loadWarehouseLots(warehouseLocation._id);
               }}>
                 <Truck className="mr-2 h-4 w-4" />
                 Crear Consignación
@@ -625,10 +697,16 @@ export default function Planning() {
           <DialogHeader>
             <DialogTitle>Crear Consignación</DialogTitle>
             <DialogDescription>
-              Selecciona los productos y cantidades a consignar
+              Selecciona los productos y lotes a consignar. Expande cada producto para ver lotes disponibles.
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4">
+            {loadingLots && (
+              <div className="flex items-center justify-center py-4 text-muted-foreground">
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                Cargando lotes disponibles...
+              </div>
+            )}
             {consignmentItems.length === 0 ? (
               <div className="text-center py-8 text-muted-foreground">
                 No hay productos con necesidad de consignación
@@ -647,51 +725,150 @@ export default function Planning() {
                     </tr>
                   </thead>
                   <tbody>
-                    {consignmentItems.map((item, index) => (
-                      <tr key={item.productId} className="border-b">
-                        <td className="p-2">
-                          <input
-                            type="checkbox"
-                            checked={item.included}
-                            onChange={(e) => {
-                              const newItems = [...consignmentItems];
-                              newItems[index].included = e.target.checked;
-                              setConsignmentItems(newItems);
-                            }}
-                            className="h-4 w-4"
-                          />
-                        </td>
-                        <td className="p-2">
-                          <div>
-                            <div className="font-medium">{item.productName}</div>
-                            <div className="text-xs text-muted-foreground">Código: {item.productCode}</div>
-                          </div>
-                        </td>
-                        <td className="p-2">{item.size}</td>
-                        <td className="p-2 text-right text-blue-600 font-medium">
-                          {item.suggestedConsignment}
-                        </td>
-                        <td className="p-2 text-right text-green-600 font-medium">
-                          {item.warehouseStock}
-                        </td>
-                        <td className="p-2">
-                          <div className="flex justify-end">
-                            <Input
-                              type="number"
-                              min="0"
-                              max={Math.min(item.suggestedConsignment, item.warehouseStock)}
-                              value={item.quantityToSend}
-                              onChange={(e) => {
-                                const newItems = [...consignmentItems];
-                                newItems[index].quantityToSend = Math.max(0, parseInt(e.target.value) || 0);
-                                setConsignmentItems(newItems);
-                              }}
-                              className="w-20 text-right"
-                            />
-                          </div>
-                        </td>
-                      </tr>
-                    ))}
+                    {consignmentItems.map((item, index) => {
+                      const productLots = warehouseLots[item.productId] || [];
+                      const isExpanded = expandedProducts[item.productId];
+                      const totalFromLots = productLots.reduce((sum, lot) => sum + (lot.quantityToSend || 0), 0);
+
+                      return (
+                        <>
+                          <tr key={item.productId} className="border-b hover:bg-muted/30">
+                            <td className="p-2">
+                              <input
+                                type="checkbox"
+                                checked={item.included}
+                                onChange={(e) => {
+                                  const newItems = [...consignmentItems];
+                                  newItems[index].included = e.target.checked;
+                                  setConsignmentItems(newItems);
+                                }}
+                                className="h-4 w-4"
+                              />
+                            </td>
+                            <td className="p-2">
+                              <div className="flex items-center gap-2">
+                                {productLots.length > 0 && (
+                                  <button
+                                    type="button"
+                                    onClick={() => setExpandedProducts(prev => ({
+                                      ...prev,
+                                      [item.productId]: !prev[item.productId]
+                                    }))}
+                                    className="p-1 hover:bg-muted rounded"
+                                  >
+                                    {isExpanded ? (
+                                      <ChevronDown className="h-4 w-4" />
+                                    ) : (
+                                      <ChevronRight className="h-4 w-4" />
+                                    )}
+                                  </button>
+                                )}
+                                <div>
+                                  <div className="font-medium">{item.productName}</div>
+                                  <div className="text-xs text-muted-foreground">
+                                    Código: {item.productCode}
+                                    {productLots.length > 0 && (
+                                      <span className="ml-2 text-blue-600">
+                                        ({productLots.length} lotes)
+                                      </span>
+                                    )}
+                                  </div>
+                                </div>
+                              </div>
+                            </td>
+                            <td className="p-2">{item.size}</td>
+                            <td className="p-2 text-right text-blue-600 font-medium">
+                              {item.suggestedConsignment}
+                            </td>
+                            <td className="p-2 text-right text-green-600 font-medium">
+                              {item.warehouseStock}
+                            </td>
+                            <td className="p-2">
+                              <div className="flex justify-end items-center gap-2">
+                                {totalFromLots > 0 ? (
+                                  <span className="text-sm font-medium text-blue-600">
+                                    {totalFromLots} (de lotes)
+                                  </span>
+                                ) : (
+                                  <Input
+                                    type="number"
+                                    min="0"
+                                    max={Math.min(item.suggestedConsignment, item.warehouseStock)}
+                                    value={item.quantityToSend}
+                                    onChange={(e) => {
+                                      const newItems = [...consignmentItems];
+                                      newItems[index].quantityToSend = Math.max(0, parseInt(e.target.value) || 0);
+                                      setConsignmentItems(newItems);
+                                    }}
+                                    className="w-20 text-right"
+                                    placeholder="FIFO"
+                                  />
+                                )}
+                              </div>
+                            </td>
+                          </tr>
+                          {/* Expanded lots section */}
+                          {isExpanded && productLots.length > 0 && (
+                            <tr key={`${item.productId}-lots`}>
+                              <td colSpan="6" className="bg-muted/20 p-0">
+                                <div className="pl-12 pr-4 py-2">
+                                  <div className="text-xs font-medium text-muted-foreground mb-2 flex items-center gap-1">
+                                    <Package className="h-3 w-3" />
+                                    Seleccionar lotes (FEFO - primero los que expiran antes)
+                                  </div>
+                                  <div className="space-y-2">
+                                    {productLots.map((lot, lotIndex) => (
+                                      <div
+                                        key={lot._id}
+                                        className="flex items-center justify-between bg-white rounded border p-2"
+                                      >
+                                        <div className="flex-1">
+                                          <div className="font-medium text-sm">{lot.lotNumber}</div>
+                                          <div className="text-xs text-muted-foreground">
+                                            Vence: {new Date(lot.expiryDate).toLocaleDateString()}
+                                            <span className="ml-2">
+                                              Disponible: <span className="font-medium text-green-600">{lot.quantityAvailable}</span>
+                                            </span>
+                                          </div>
+                                        </div>
+                                        <div className="flex items-center gap-2">
+                                          <Input
+                                            type="number"
+                                            min="0"
+                                            max={lot.quantityAvailable}
+                                            value={lot.quantityToSend || ''}
+                                            onChange={(e) => {
+                                              const newLots = { ...warehouseLots };
+                                              const qty = Math.max(0, Math.min(lot.quantityAvailable, parseInt(e.target.value) || 0));
+                                              newLots[item.productId][lotIndex].quantityToSend = qty;
+                                              setWarehouseLots(newLots);
+                                            }}
+                                            placeholder="0"
+                                            className="w-16 text-right text-sm"
+                                          />
+                                          <Button
+                                            type="button"
+                                            variant="outline"
+                                            size="sm"
+                                            onClick={() => {
+                                              const newLots = { ...warehouseLots };
+                                              newLots[item.productId][lotIndex].quantityToSend = lot.quantityAvailable;
+                                              setWarehouseLots(newLots);
+                                            }}
+                                          >
+                                            Todo
+                                          </Button>
+                                        </div>
+                                      </div>
+                                    ))}
+                                  </div>
+                                </div>
+                              </td>
+                            </tr>
+                          )}
+                        </>
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>
@@ -699,14 +876,24 @@ export default function Planning() {
             <div className="bg-muted/50 p-3 rounded-md">
               <div className="flex justify-between text-sm font-medium">
                 <span>Total de productos seleccionados:</span>
-                <span>{consignmentItems.filter(i => i.included && i.quantityToSend > 0).length}</span>
+                <span>
+                  {consignmentItems.filter(item => {
+                    if (!item.included) return false;
+                    const productLots = warehouseLots[item.productId] || [];
+                    const totalFromLots = productLots.reduce((sum, lot) => sum + (lot.quantityToSend || 0), 0);
+                    return totalFromLots > 0 || item.quantityToSend > 0;
+                  }).length}
+                </span>
               </div>
               <div className="flex justify-between text-sm font-medium">
                 <span>Total unidades a consignar:</span>
                 <span className="text-blue-600">
-                  {consignmentItems
-                    .filter(i => i.included)
-                    .reduce((sum, i) => sum + (i.quantityToSend || 0), 0)}
+                  {consignmentItems.reduce((total, item) => {
+                    if (!item.included) return total;
+                    const productLots = warehouseLots[item.productId] || [];
+                    const totalFromLots = productLots.reduce((sum, lot) => sum + (lot.quantityToSend || 0), 0);
+                    return total + (totalFromLots > 0 ? totalFromLots : (item.quantityToSend || 0));
+                  }, 0)}
                 </span>
               </div>
             </div>
@@ -724,7 +911,13 @@ export default function Planning() {
               disabled={
                 createConsignmentMutation.isPending ||
                 createConsignmentMutation.isSuccess ||
-                consignmentItems.filter(i => i.included && i.quantityToSend > 0).length === 0
+                loadingLots ||
+                consignmentItems.filter(item => {
+                  if (!item.included) return false;
+                  const productLots = warehouseLots[item.productId] || [];
+                  const totalFromLots = productLots.reduce((sum, lot) => sum + (lot.quantityToSend || 0), 0);
+                  return totalFromLots > 0 || item.quantityToSend > 0;
+                }).length === 0
               }
               className={createConsignmentMutation.isSuccess ? 'bg-green-600 hover:bg-green-700' : ''}
             >

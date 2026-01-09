@@ -263,7 +263,7 @@ exports.getInventoryForPlanning = async (req, res, next) => {
 
 // Default suppliers to track for arrivals (can be configured)
 const TRACKED_SUPPLIERS = [
-  { cardCode: 'BIOTRONIK', cardName: 'BIOTRONIK AG' },
+  { cardCode: 'P00031', cardName: 'Centralmed' },
 ];
 
 /**
@@ -348,33 +348,37 @@ exports.getArrivals = async (req, res, next) => {
 
     const data = await response.json();
 
-    // Process and filter to batch-managed items only
+    // Process arrivals - include all items
     const arrivals = [];
     for (const doc of data.value || []) {
       for (const line of doc.DocumentLines || []) {
-        // Only include items with batch numbers (batch-managed)
-        if (line.BatchNumbers && line.BatchNumbers.length > 0) {
-          // Filter by warehouse if specified
-          if (warehouse && line.WarehouseCode !== warehouse) {
-            continue;
-          }
-
-          arrivals.push({
-            sapDocNum: doc.DocNum,
-            docDate: doc.DocDate,
-            supplierCode: doc.CardCode,
-            supplierName: doc.CardName,
-            itemCode: line.ItemCode,
-            itemName: line.ItemDescription,
-            warehouseCode: line.WarehouseCode,
-            batches: line.BatchNumbers.map(b => ({
-              batchNumber: b.BatchNumber,
-              quantity: b.Quantity,
-              expiryDate: b.ExpiryDate,
-            })),
-            totalQuantity: line.BatchNumbers.reduce((sum, b) => sum + b.Quantity, 0),
-          });
+        // Filter by warehouse if specified
+        if (warehouse && line.WarehouseCode !== warehouse) {
+          continue;
         }
+
+        // Check if item has batch numbers
+        const hasBatches = line.BatchNumbers && line.BatchNumbers.length > 0;
+
+        arrivals.push({
+          sapDocNum: doc.DocNum,
+          docDate: doc.DocDate,
+          supplierCode: doc.CardCode,
+          supplierName: doc.CardName,
+          itemCode: line.ItemCode,
+          itemName: line.ItemDescription,
+          warehouseCode: line.WarehouseCode,
+          batches: hasBatches
+            ? line.BatchNumbers.map(b => ({
+                batchNumber: b.BatchNumber,
+                quantity: b.Quantity,
+                expiryDate: b.ExpiryDate,
+              }))
+            : [{ batchNumber: 'N/A', quantity: line.Quantity, expiryDate: null }],
+          totalQuantity: hasBatches
+            ? line.BatchNumbers.reduce((sum, b) => sum + b.Quantity, 0)
+            : line.Quantity,
+        });
       }
     }
 

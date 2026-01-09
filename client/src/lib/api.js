@@ -117,4 +117,17 @@ export const consignacionesApi = {
   confirm: (id, data) => api.put(`/consignaciones/${id}/confirm`, data),
 };
 
+// SAP Integration API
+export const sapApi = {
+  testConnection: () => api.get('/sap/test'),
+  getWarehouses: () => api.get('/sap/warehouses'),
+  getBinLocations: (warehouse) => api.get('/sap/bin-locations', { params: { warehouse } }),
+  getItems: (params) => api.get('/sap/items', { params }),
+  getSuppliers: (params) => api.get('/sap/suppliers', { params }),
+  getBatchStock: (itemCode, warehouseCode) => api.get('/sap/batch-stock', { params: { itemCode, warehouseCode } }),
+  getInventory: (locationId) => api.get('/sap/inventory', { params: { locationId } }),
+  getArrivals: (params) => api.get('/sap/arrivals', { params }),
+  createStockTransfer: (data) => api.post('/sap/stock-transfer', data),
+};
+
 export default api;
