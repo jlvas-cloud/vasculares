@@ -12,12 +12,15 @@ const { body } = require('express-validator');
 router.use(verifyUser, getCompanyId);
 
 // Validation rules for creating consignment
+// loteId and lotNumber are optional (if not provided, FIFO allocation is used)
 const validateCreate = [
   body('fromLocationId').notEmpty().withMessage('From location (warehouse) is required'),
   body('toLocationId').notEmpty().withMessage('To location (centro) is required'),
   body('items').isArray({ min: 1 }).withMessage('At least one item is required'),
   body('items.*.productId').notEmpty().withMessage('Product ID is required for each item'),
   body('items.*.quantitySent').isInt({ min: 1 }).withMessage('Quantity sent must be at least 1'),
+  body('items.*.loteId').optional().isMongoId().withMessage('Lote ID must be a valid MongoDB ID'),
+  body('items.*.lotNumber').optional().isString().withMessage('Lot number must be a string'),
 ];
 
 // Validation rules for confirming receipt

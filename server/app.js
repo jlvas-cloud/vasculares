@@ -31,6 +31,7 @@ const transaccionesRoutes = require('./routes/transacciones');
 const analyticsRoutes = require('./routes/analytics');
 const inventarioObjetivosRoutes = require('./routes/inventarioObjetivos');
 const consignacionesRoutes = require('./routes/consignaciones');
+const sapRoutes = require('./routes/sap');
 
 app.use('/api/auth', authRoutes);
 app.use('/api/productos', productosRoutes);
@@ -40,6 +41,7 @@ app.use('/api/transacciones', transaccionesRoutes);
 app.use('/api/analytics', analyticsRoutes);
 app.use('/api/inventario-objetivos', inventarioObjetivosRoutes);
 app.use('/api/consignaciones', consignacionesRoutes);
+app.use('/api/sap', sapRoutes);
 
 // Serve static files in production
 if (process.env.NODE_ENV === 'production') {
