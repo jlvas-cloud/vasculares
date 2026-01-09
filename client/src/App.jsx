@@ -7,8 +7,6 @@ import Login from './pages/Login';
 import Dashboard from './pages/Dashboard';
 import Products from './pages/Products';
 import Locations from './pages/Locations';
-import WarehouseReceipt from './pages/WarehouseReceipt';
-import Consignment from './pages/Consignment';
 import Consumption from './pages/Consumption';
 import Inventory from './pages/Inventory';
 import TransactionHistory from './pages/TransactionHistory';
@@ -53,8 +51,6 @@ function App() {
                         <Route path="/" element={<Dashboard />} />
                         <Route path="/products" element={<Products />} />
                         <Route path="/locations" element={<Locations />} />
-                        <Route path="/warehouse-receipt" element={<WarehouseReceipt />} />
-                        <Route path="/consignment" element={<Consignment />} />
                         <Route path="/consumption" element={<Consumption />} />
                         <Route path="/inventory" element={<Inventory />} />
                         <Route path="/transactions" element={<TransactionHistory />} />

@@ -67,8 +67,6 @@ export const locacionesApi = {
 export const transaccionesApi = {
   getAll: (params) => api.get('/transacciones', { params }),
   getOne: (id) => api.get(`/transacciones/${id}`),
-  warehouseReceipt: (data) => api.post('/transacciones/warehouse-receipt', data),
-  consignmentOut: (data) => api.post('/transacciones/consignment-out', data),
   consumption: (data) => api.post('/transacciones/consumption', data),
 };
 
