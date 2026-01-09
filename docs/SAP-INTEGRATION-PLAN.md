@@ -9,6 +9,370 @@ Integrate vasculares app with SAP B1 to create stock transfers directly from the
 - **Transition**: All future products will be Orsiro Mission
 - **Requirement**: Products need reference to legacy SAP code for mapping
 
+---
+
+## Complete Data Flow
+
+### Master Data Flow
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                           COMPLETE SYSTEM FLOW                               │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                              │
+│   SUPPLIER                                                                   │
+│      │                                                                       │
+│      ▼                                                                       │
+│   ┌─────────────────────────────────────────┐                               │
+│   │  SAP B1: Goods Receipt (Entrada)        │                               │
+│   │  - Supplier Invoice created             │                               │
+│   │  - Batch/Lot numbers assigned           │                               │
+│   │  - Stock added to Warehouse 01          │                               │
+│   └─────────────────────────────────────────┘                               │
+│      │                                                                       │
+│      │  "Sync Arrivals" button                                              │
+│      ▼                                                                       │
+│   ┌─────────────────────────────────────────┐                               │
+│   │  VASCULARES: Warehouse Inventory        │                               │
+│   │  - Products with lot numbers            │                               │
+│   │  - Expiry dates                         │                               │
+│   │  - Available quantities                 │                               │
+│   └─────────────────────────────────────────┘                               │
+│      │                                                                       │
+│      │  "Crear Consignación"                                                │
+│      ▼                                                                       │
+│   ┌─────────────────────────────────────────┐                               │
+│   │  VASCULARES: Select Products & Lots     │                               │
+│   │  - Choose destination Centro            │                               │
+│   │  - Select specific lots to send         │                               │
+│   │  - Review before confirming             │                               │
+│   └─────────────────────────────────────────┘                               │
+│      │                                                                       │
+│      │  Creates StockTransfer via API                                       │
+│      ▼                                                                       │
+│   ┌─────────────────────────────────────────┐                               │
+│   │  SAP B1: Stock Transfer                 │                               │
+│   │  - From: Warehouse 01 (Principal)       │                               │
+│   │  - To: Warehouse 10 + Bin (Centro)      │                               │
+│   │  - Batch numbers specified              │                               │
+│   └─────────────────────────────────────────┘                               │
+│      │                                                                       │
+│      │  DocNum returned                                                      │
+│      ▼                                                                       │
+│   ┌─────────────────────────────────────────┐                               │
+│   │  VASCULARES: Consignment Record         │                               │
+│   │  - Links to SAP DocNum                  │                               │
+│   │  - Tracks status (EN_TRANSITO, etc)     │                               │
+│   │  - Centro confirms receipt              │                               │
+│   └─────────────────────────────────────────┘                               │
+│                                                                              │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+### Key Principles
+1. **SAP is the source of truth** for inventory quantities and batch numbers
+2. **Vasculares is the planning UI** for selecting what to send where
+3. **No double entry** - actions in vasculares create transactions in SAP
+4. **Batch selection in vasculares** - user picks specific lots, SAP validates
+
+---
+
+## Initial Migration
+
+### Purpose
+Import current SAP inventory into vasculares to bootstrap the system.
+
+### What to Import
+1. **Products** (Items with ManageBatchNumbers = 'tYES')
+   - ItemCode → sapItemCode
+   - ItemName → name
+   - Create with category 'STENTS_CORONARIOS' or 'GUIAS'
+
+2. **Locations** (Warehouses + Bin Locations)
+   - Map existing centros to SAP bin locations
+   - Create any missing locations
+
+3. **Inventory** (Batch stock per warehouse/bin)
+   - Current quantities per location
+   - Lot numbers and expiry dates
+
+### SAP API Endpoints for Migration
+
+```javascript
+// 1. Get all batch-managed items
+GET /b1s/v1/Items?$filter=ManageBatchNumbers eq 'tYES'
+    &$select=ItemCode,ItemName,ItemWarehouseInfoCollection
+
+// 2. Get batch details for each item
+GET /b1s/v1/BatchNumberDetails?$filter=ItemCode eq '{itemCode}'
+
+// 3. Get bin locations
+GET /b1s/v1/BinLocations?$filter=Warehouse eq '10'
+
+// 4. Get stock per warehouse (from Item)
+GET /b1s/v1/Items('{itemCode}')?$select=ItemCode,ItemWarehouseInfoCollection
+```
+
+### Migration Challenge: Batch Quantities per Location
+
+**Problem**: SAP Service Layer doesn't expose the OIBT (Item Batches) table directly, which contains batch quantities per warehouse.
+
+**Solutions**:
+
+| Option | Description | Effort |
+|--------|-------------|--------|
+| **A. Query workaround** | Use StockTransfer history to calculate current batch locations | High |
+| **B. Custom B1 query** | Create SQL query in SAP B1 and expose via SQLQueries | Medium |
+| **C. Semantic Layer** | Enable semantic layer in SAP for OIBT view | Low (if available) |
+| **D. Manual export** | Export from SAP UI, import via script | Quick but manual |
+
+**Recommended**: Option B or D for initial migration, then implement proper sync.
+
+### Migration Script Structure
+
+```javascript
+// server/scripts/migrate-from-sap.js
+
+async function migrateFromSAP() {
+  // 1. Connect to SAP
+  await sapService.login();
+
+  // 2. Get all bin locations → create Locations
+  const bins = await sapService.getBinLocations('10');
+  for (const bin of bins) {
+    await createOrUpdateLocation(bin);
+  }
+
+  // 3. Get all batch-managed items → create Products
+  const items = await sapService.getBatchManagedItems();
+  for (const item of items) {
+    await createOrUpdateProduct(item);
+  }
+
+  // 4. Get batch stock (requires workaround)
+  // Option A: Use exported CSV
+  // Option B: Query custom SQL view
+  const batchStock = await getBatchStockData();
+
+  // 5. Create Lotes and update Inventory
+  for (const stock of batchStock) {
+    await createLote(stock);
+    await updateInventario(stock.productId, stock.locationId);
+  }
+
+  // 6. Log summary
+  console.log('Migration complete');
+}
+```
+
+---
+
+## Arrival Sync Feature
+
+### Purpose
+When products arrive from suppliers (via SAP Goods Receipt), sync them to vasculares warehouse inventory.
+
+### User Flow
+```
+1. Supplier delivers products
+2. Warehouse staff creates Goods Receipt (Entrada) in SAP
+   - Scans/enters batch numbers
+   - SAP adds stock to warehouse 01
+3. User clicks "Sincronizar Entradas" in vasculares
+4. App queries SAP for recent goods receipts
+5. New batches are added to vasculares inventory
+6. User can now include them in consignments
+```
+
+### SAP Entity: PurchaseDeliveryNotes (Goods Receipt PO)
+
+```javascript
+// Query recent goods receipts
+GET /b1s/v1/PurchaseDeliveryNotes
+    ?$filter=DocDate ge '{lastSyncDate}' and Warehouse eq '01'
+    &$orderby=DocDate desc
+    &$select=DocNum,DocDate,CardName,DocumentLines
+
+// Response structure
+{
+  "DocNum": 4431,
+  "DocDate": "2024-07-23",
+  "CardName": "BIOTRONIK AG",
+  "DocumentLines": [
+    {
+      "ItemCode": "364481",
+      "ItemDescription": "Stent Coronario Medicado Orsiro 2.25/15",
+      "Quantity": 5,
+      "WarehouseCode": "01",
+      "BatchNumbers": [
+        {
+          "BatchNumber": "06253084",
+          "Quantity": 3,
+          "ExpiryDate": "2028-07-09"
+        },
+        {
+          "BatchNumber": "06253085",
+          "Quantity": 2,
+          "ExpiryDate": "2028-07-15"
+        }
+      ]
+    }
+  ]
+}
+```
+
+### Implementation
+
+#### New API Endpoint
+```javascript
+// server/controllers/sap.js
+
+// GET /api/sap/arrivals?since=2024-01-01
+exports.getArrivals = async (req, res) => {
+  const { since } = req.query;
+
+  // Query SAP for goods receipts
+  const grpos = await sapService.getPurchaseDeliveryNotes({
+    fromDate: since,
+    warehouse: '01'
+  });
+
+  // Filter to batch-managed items we track
+  const arrivals = [];
+  for (const grpo of grpos) {
+    for (const line of grpo.DocumentLines) {
+      if (line.BatchNumbers?.length > 0) {
+        arrivals.push({
+          sapDocNum: grpo.DocNum,
+          docDate: grpo.DocDate,
+          supplier: grpo.CardName,
+          itemCode: line.ItemCode,
+          itemName: line.ItemDescription,
+          batches: line.BatchNumbers
+        });
+      }
+    }
+  }
+
+  res.json({ arrivals });
+};
+
+// POST /api/sap/arrivals/sync
+exports.syncArrivals = async (req, res) => {
+  const { arrivals } = req.body; // Selected arrivals to import
+
+  for (const arrival of arrivals) {
+    // Find or create product
+    const product = await findOrCreateProduct(arrival.itemCode);
+
+    // Create lotes for each batch
+    for (const batch of arrival.batches) {
+      await createLote({
+        productId: product._id,
+        lotNumber: batch.BatchNumber,
+        expiryDate: batch.ExpiryDate,
+        quantity: batch.Quantity,
+        locationId: warehouseId,
+        sapDocNum: arrival.sapDocNum
+      });
+    }
+
+    // Update inventory
+    await updateInventario(product._id, warehouseId);
+  }
+
+  // Update last sync date
+  await updateLastSyncDate();
+
+  res.json({ success: true, imported: arrivals.length });
+};
+```
+
+#### Frontend: Arrivals Sync UI
+
+```jsx
+// client/src/pages/InventoryArrivals.jsx
+
+function InventoryArrivals() {
+  const [arrivals, setArrivals] = useState([]);
+  const [selected, setSelected] = useState([]);
+  const [lastSync, setLastSync] = useState(null);
+
+  // Fetch pending arrivals from SAP
+  const { data, isLoading } = useQuery({
+    queryKey: ['sap-arrivals', lastSync],
+    queryFn: () => sapApi.getArrivals({ since: lastSync })
+  });
+
+  // Sync selected arrivals
+  const syncMutation = useMutation({
+    mutationFn: (arrivals) => sapApi.syncArrivals(arrivals),
+    onSuccess: () => {
+      queryClient.invalidateQueries(['planning-data']);
+      toast.success('Entradas sincronizadas');
+    }
+  });
+
+  return (
+    <div>
+      <h1>Sincronizar Entradas</h1>
+      <p>Últimos productos recibidos en SAP</p>
+
+      <Button onClick={() => refetch()}>
+        🔄 Buscar Nuevas Entradas
+      </Button>
+
+      <Table>
+        <thead>
+          <tr>
+            <th>☑</th>
+            <th>Fecha</th>
+            <th>Proveedor</th>
+            <th>Producto</th>
+            <th>Lotes</th>
+            <th>Cantidad</th>
+          </tr>
+        </thead>
+        <tbody>
+          {arrivals.map(arrival => (
+            <tr key={arrival.sapDocNum + arrival.itemCode}>
+              <td><Checkbox /></td>
+              <td>{arrival.docDate}</td>
+              <td>{arrival.supplier}</td>
+              <td>{arrival.itemName}</td>
+              <td>{arrival.batches.map(b => b.BatchNumber).join(', ')}</td>
+              <td>{arrival.batches.reduce((sum, b) => sum + b.Quantity, 0)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </Table>
+
+      <Button onClick={() => syncMutation.mutate(selected)}>
+        Importar Seleccionados
+      </Button>
+    </div>
+  );
+}
+```
+
+### Sync Tracking
+
+Add to system settings or a dedicated collection:
+
+```javascript
+// Track sync state
+{
+  lastArrivalSync: Date,           // Last time arrivals were synced
+  lastSyncedDocNum: Number,        // Last SAP DocNum processed
+  syncHistory: [{
+    date: Date,
+    documentsProcessed: Number,
+    itemsImported: Number
+  }]
+}
+```
+
+---
+
 ## SAP Environment
 ```
 Server: https://94.74.64.47:50000/b1s/v1
@@ -162,34 +526,61 @@ class SAPService {
 
   // Read operations
   async getWarehouses() { }
+  async getBinLocations(warehouse) { }
   async getItems(filter) { }
-  async getItemStock(itemCode) { }
+  async getBatchManagedItems() { }
   async getBatchStock(itemCode, warehouseCode) { }
+  async getPurchaseDeliveryNotes(options) { }
 
   // Write operations
   async createStockTransfer(transfer) { }
 }
 ```
 
-### Phase 2: Product Sync
-Sync products from SAP or map existing products.
-
-**Option A: Manual mapping**
-- Admin UI to link vasculares products to SAP ItemCodes
-- Good for transition period with mixed old/new codes
-
-**Option B: Auto-sync from SAP**
-- Import items from SAP with batch management
-- Create products in vasculares with SAP codes
-
-**Recommended: Option A** during transition, then Option B for new products.
+### Phase 2: Data Model Updates
+Update models to support SAP integration.
 
 **Files to modify:**
-- `server/models/productoModel.js` - Add sapItemCode field
+- `server/models/productoModel.js` - Add sapItemCode, legacyCode fields
+- `server/models/locacionModel.js` - Add sapIntegration object (warehouseCode, binAbsEntry, binCode)
+- `server/models/consignacionModel.js` - Add sapDocNum field
 - `server/controllers/productos.js` - Add mapping endpoint
 - `client/src/pages/Products.jsx` - Add SAP code field in edit form
 
-### Phase 3: Batch/Lot Visibility
+### Phase 3: Initial Migration
+Import current SAP inventory to bootstrap the system.
+
+**Steps:**
+1. Export products and batch stock from SAP (via API or manual export)
+2. Run migration script to create Products with sapItemCode
+3. Map existing Locations to SAP warehouses and bin locations
+4. Import batch stock as Lotes in appropriate locations
+5. Verify inventory matches SAP
+
+**Files to create:**
+- `server/scripts/migrate-from-sap.js` - Migration script
+- `server/scripts/map-locations-to-sap.js` - Location mapping helper
+
+### Phase 4: Arrival Sync (Sincronizar Entradas)
+Sync new product arrivals from SAP to vasculares.
+
+**User Flow:**
+1. Warehouse staff creates Goods Receipt in SAP (product delivery)
+2. User clicks "Sincronizar Entradas" in vasculares
+3. App queries SAP for recent PurchaseDeliveryNotes
+4. User reviews and selects items to import
+5. System creates Lotes and updates inventory
+
+**Files to create:**
+- `server/controllers/sap.js` - SAP API endpoints including arrivals
+- `server/routes/sap.js` - Routes
+- `client/src/pages/InventoryArrivals.jsx` - Arrivals sync page
+
+**API Endpoints:**
+- `GET /api/sap/arrivals?since={date}` - Get recent goods receipts
+- `POST /api/sap/arrivals/sync` - Import selected arrivals
+
+### Phase 5: Batch/Lot Visibility
 Show SAP batch stock in consignment UI.
 
 **New API endpoint:**
@@ -220,14 +611,10 @@ GET /api/sap/batch-stock?itemCode=364481&warehouse=01
 }
 ```
 
-**Files to create:**
-- `server/controllers/sap.js` - SAP API endpoints
-- `server/routes/sap.js` - Routes
-
 **Files to modify:**
 - `client/src/pages/Planning.jsx` - Show batch selector in consignment modal
 
-### Phase 4: Stock Transfer Creation
+### Phase 6: Stock Transfer Creation
 Create SAP transfers when consignment is confirmed.
 
 **Flow:**
@@ -236,7 +623,7 @@ Create SAP transfers when consignment is confirmed.
 3. Backend creates StockTransfer in SAP
 4. SAP returns DocNum
 5. Backend stores SAP DocNum in consignacion record
-6. Local inventory updated (or synced from SAP)
+6. Local inventory updated
 
 **SAP API Call:**
 ```javascript
@@ -272,18 +659,17 @@ POST /b1s/v1/StockTransfers
 **Note**: `BinAbsEntry` specifies which center (bin location) receives the stock within warehouse 10.
 
 **Files to modify:**
-- `server/models/consignacionModel.js` - Add sapDocNum field
 - `server/controllers/consignaciones.js` - Call SAP on create
 
-### Phase 5: Inventory Sync (Optional)
-Keep vasculares inventory in sync with SAP.
+### Phase 7: Continuous Sync (Optional)
+Keep vasculares inventory in sync with SAP on an ongoing basis.
 
 **Options:**
-1. **Read-only from SAP**: Always fetch stock from SAP
-2. **Periodic sync**: Cron job to sync inventory
+1. **Read-only from SAP**: Always fetch stock from SAP for display
+2. **Periodic sync**: Cron job to reconcile inventory
 3. **Event-driven**: SAP webhook on changes (if available)
 
-**Recommended**: Start with read-only for batch selection, keep local inventory for planning calculations.
+**Recommended**: Rely on Arrival Sync for incoming stock and Transfer Creation for outgoing. Full sync as backup reconciliation.
 
 ## UI Changes
 
@@ -401,42 +787,66 @@ db.locaciones.updateOne(
 ### New Files
 ```
 server/
-├── services/sapService.js      # SAP API client
-├── controllers/sap.js          # SAP endpoints
-└── routes/sap.js               # SAP routes
+├── services/sapService.js           # SAP API client with session management
+├── controllers/sap.js               # SAP endpoints (batch-stock, arrivals, sync)
+├── routes/sap.js                    # SAP API routes
+├── scripts/migrate-from-sap.js      # Initial migration script
+└── scripts/map-locations-to-sap.js  # Location mapping helper
 
 client/src/
+├── pages/InventoryArrivals.jsx      # Arrivals sync page ("Sincronizar Entradas")
 └── components/consignment/
-    └── BatchSelector.jsx       # Lot selection component
+    └── BatchSelector.jsx            # Lot selection component for consignments
 ```
 
 ### Modified Files
 ```
 server/
-├── models/productoModel.js     # Add sapItemCode, legacyCode
-├── models/locacionModel.js     # Add sapWarehouseCode
-├── models/consignacionModel.js # Add sapDocNum
-├── controllers/consignaciones.js # SAP integration on create
-└── routes.js                   # Add SAP routes
+├── models/productoModel.js          # Add sapItemCode, legacyCode fields
+├── models/locacionModel.js          # Add sapIntegration object (warehouseCode, binAbsEntry, binCode)
+├── models/consignacionModel.js      # Add sapDocNum, sapTransferStatus fields
+├── controllers/consignaciones.js    # Call SAP StockTransfer on create
+└── routes.js                        # Add SAP routes
 
 client/src/
-└── pages/Planning.jsx          # Batch selector in modal
+├── pages/Planning.jsx               # Batch selector in consignment modal
+└── App.jsx                          # Add route for InventoryArrivals
 ```
 
-## Timeline Estimate
-| Phase | Effort |
-|-------|--------|
-| Phase 1: SAP Service | 1-2 days |
-| Phase 2: Product Mapping | 1 day |
-| Phase 3: Batch Visibility | 1-2 days |
-| Phase 4: Transfer Creation | 2-3 days |
-| Phase 5: Inventory Sync | Optional, 2-3 days |
+## Implementation Order
+
+| Phase | Description | Dependencies |
+|-------|-------------|--------------|
+| Phase 1 | SAP Service & Authentication | None |
+| Phase 2 | Data Model Updates | Phase 1 |
+| Phase 3 | Initial Migration | Phase 1, 2 |
+| Phase 4 | Arrival Sync | Phase 1, 2, 3 |
+| Phase 5 | Batch Visibility | Phase 1, 2, 3 |
+| Phase 6 | Transfer Creation | Phase 1, 2, 5 |
+| Phase 7 | Continuous Sync (Optional) | All above |
 
 ## Next Steps
-1. Add SAP credentials to `.env`
-2. Update product model with sapItemCode field
-3. Update location model with sapWarehouseCode field
-4. Create SAP service
-5. Test connection and basic operations
-6. Build batch selector UI
-7. Integrate transfer creation
+
+### Immediate (Setup)
+1. Add SAP credentials to `.env` file
+2. Create `server/services/sapService.js` with login/session management
+3. Test SAP connection and basic API calls
+
+### Data Model Updates
+4. Update `productoModel.js` with sapItemCode, legacyCode fields
+5. Update `locacionModel.js` with sapIntegration object
+6. Update `consignacionModel.js` with sapDocNum field
+
+### Initial Migration
+7. Map existing locations to SAP warehouses and bin locations (see Migration Steps)
+8. Create migration script to import products from SAP
+9. Import batch stock to create Lotes
+
+### Feature Development
+10. Build Arrival Sync page (`InventoryArrivals.jsx`)
+11. Build BatchSelector component for consignment modal
+12. Integrate SAP StockTransfer creation on consignment confirm
+
+### Validation
+13. Test full workflow: Arrival → Consignment → SAP Transfer
+14. Verify inventory matches SAP after each operation
