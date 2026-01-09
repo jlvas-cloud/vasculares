@@ -27,12 +27,22 @@ const consignacionSchema = new Schema({
     default: 'EN_TRANSITO',
   },
 
-  // Items being consigned
+  // Items being consigned (each item = one lot of one product)
   items: [{
     productId: {
       type: mongoose.Types.ObjectId,
       ref: 'productos',
       required: true,
+    },
+    loteId: {
+      type: mongoose.Types.ObjectId,
+      ref: 'lotes',
+      required: true,
+    },
+    lotNumber: {
+      type: String,
+      required: true,
+      description: 'Batch number for SAP integration',
     },
     quantitySent: {
       type: Number,
@@ -48,6 +58,23 @@ const consignacionSchema = new Schema({
       type: String,
     },
   }],
+
+  // SAP Business One Integration
+  sapDocNum: {
+    type: Number,
+    sparse: true,
+    description: 'SAP Stock Transfer document number',
+  },
+  sapTransferStatus: {
+    type: String,
+    enum: ['PENDING', 'CREATED', 'FAILED'],
+    default: null,
+    description: 'Status of SAP stock transfer creation',
+  },
+  sapError: {
+    type: String,
+    description: 'Error message if SAP transfer failed',
+  },
 
   // Creation tracking
   createdBy: {
@@ -80,6 +107,7 @@ consignacionSchema.index({ status: 1, createdAt: -1 });
 consignacionSchema.index({ fromLocationId: 1, createdAt: -1 });
 consignacionSchema.index({ toLocationId: 1, createdAt: -1 });
 consignacionSchema.index({ createdAt: -1 });
+consignacionSchema.index({ sapDocNum: 1 }, { sparse: true });
 
 // Virtual to check if consignment is old (> 3 days in transit)
 consignacionSchema.virtual('isOld').get(function() {

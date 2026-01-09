@@ -254,8 +254,8 @@ node scripts/import-centros.js
 
 ### Migration Checklist
 
-- [ ] Run `import-orsiro-codes.js` to create products with code mappings
-- [ ] Run `import-centros.js` to create locations with SAP bin mappings
+- [x] Run `import-orsiro-codes.js` to create products with code mappings ✅
+- [x] Run `import-centros.js` to create locations with SAP bin mappings ✅
 - [ ] Export inventory from SAP for Warehouse 01 (Principal)
 - [ ] Export inventory from SAP for Warehouse 10 (Consignacion) with bin locations
 - [ ] Run `migrate-from-sap-export.js` migration script
@@ -600,11 +600,11 @@ sapIntegration: {
 
 ## Implementation Phases
 
-### Phase 1: SAP Service & Authentication
+### Phase 1: SAP Service & Authentication ✅ DONE
 Create backend service for SAP communication.
 
-**Files to create:**
-- `server/services/sapService.js`
+**Files created:**
+- `server/services/sapService.js` ✅
 
 **Features:**
 - Session management (login/logout)
@@ -634,31 +634,31 @@ class SAPService {
 }
 ```
 
-### Phase 2: Data Model Updates
+### Phase 2: Data Model Updates ✅ DONE
 Update models to support SAP integration.
 
-**Files to modify:**
-- `server/models/productoModel.js` - Add sapItemCode, legacyCode fields
-- `server/models/locacionModel.js` - Add sapIntegration object (warehouseCode, binAbsEntry, binCode)
-- `server/models/consignacionModel.js` - Add sapDocNum field
-- `server/controllers/productos.js` - Add mapping endpoint
-- `client/src/pages/Products.jsx` - Add SAP code field in edit form
+**Files modified:**
+- `server/models/productoModel.js` - Added sapItemCode, legacyCode fields ✅
+- `server/models/locacionModel.js` - Added sapIntegration object (warehouseCode, binAbsEntry, binCode) ✅
+- `server/models/consignacionModel.js` - Added sapDocNum, sapTransferStatus, sapError fields + lot tracking (loteId, lotNumber per item) ✅
+- `client/src/pages/Locations.jsx` - Added SAP fields in edit form ✅
+- `server/controllers/productos.js` - Add mapping endpoint (pending)
+- `client/src/pages/Products.jsx` - Add SAP code field in edit form (pending)
 
-### Phase 3: Initial Migration (Manual Export)
+### Phase 3: Initial Migration (Manual Export) 🔄 IN PROGRESS
 Import current SAP inventory to bootstrap the system using Excel export.
 
 **Steps:**
-1. Map existing Locations to SAP warehouses and bin locations (run MongoDB updates)
-2. Export inventory from SAP UI (Warehouse 01 and 10 with batch details)
-3. Place Excel file in `server/scripts/` folder
-4. Run migration script to create Products, Lotes, and Inventario
-5. Verify totals match SAP
+1. ✅ Map existing Locations to SAP warehouses and bin locations (done via import-centros.js)
+2. ⬜ Export inventory from SAP UI (Warehouse 01 and 10 with batch details)
+3. ⬜ Place CSV file in `server/scripts/` folder
+4. ⬜ Run migration script to create Products, Lotes, and Inventario
+5. ⬜ Verify totals match SAP
 
-**Files to create:**
-- `server/scripts/migrate-from-sap-export.js` - Migration script (reads Excel)
+**Files created:**
+- `server/scripts/migrate-from-sap-export.js` - Migration script (reads CSV) ✅
 
-**Dependencies:**
-- `xlsx` npm package for reading Excel files
+**Note:** Script expects CSV format. For Excel files, save as CSV first or add xlsx package.
 
 ### Phase 4: Arrival Sync (Sincronizar Entradas)
 Sync new product arrivals from SAP to vasculares.
@@ -886,13 +886,13 @@ db.locaciones.updateOne(
 ### New Files
 ```
 server/
-├── services/sapService.js              # SAP API client with session management
+├── services/sapService.js              # SAP API client with session management ✅ DONE
 ├── controllers/sap.js                  # SAP endpoints (batch-stock, arrivals, sync)
 ├── routes/sap.js                       # SAP API routes
-├── scripts/import-orsiro-codes.js      # Product code mapping script (READY)
-├── scripts/orsiro-codes.xlsx           # Source: new codes → legacy codes (READY)
-├── scripts/import-centros.js           # Centro/location import script (READY)
-└── scripts/migrate-from-sap-export.js  # Inventory migration script (reads Excel)
+├── scripts/import-orsiro-codes.js      # Product code mapping script ✅ DONE
+├── scripts/orsiro-codes.xlsx           # Source: new codes → legacy codes ✅ DONE
+├── scripts/import-centros.js           # Centro/location import script ✅ DONE
+└── scripts/migrate-from-sap-export.js  # Inventory migration script (reads CSV) ✅ DONE
 
 client/src/
 ├── pages/InventoryArrivals.jsx         # Arrivals sync page ("Sincronizar Entradas")
@@ -903,13 +903,14 @@ client/src/
 ### Modified Files
 ```
 server/
-├── models/productoModel.js          # Add sapItemCode, legacyCode fields (DONE)
-├── models/locacionModel.js          # Add sapIntegration object (DONE)
-├── models/consignacionModel.js      # Add sapDocNum, sapTransferStatus fields
+├── models/productoModel.js          # Add sapItemCode, legacyCode fields ✅ DONE
+├── models/locacionModel.js          # Add sapIntegration object ✅ DONE
+├── models/consignacionModel.js      # Add sapDocNum, sapTransferStatus, loteId/lotNumber ✅ DONE
 ├── controllers/consignaciones.js    # Call SAP StockTransfer on create
 └── routes.js                        # Add SAP routes
 
 client/src/
+├── pages/Locations.jsx              # SAP integration fields in form ✅ DONE
 ├── pages/Planning.jsx               # Batch selector in consignment modal
 └── App.jsx                          # Add route for InventoryArrivals
 ```
@@ -928,27 +929,27 @@ client/src/
 
 ## Next Steps
 
-### Immediate (Setup)
-1. Add SAP credentials to `.env` file
-2. Create `server/services/sapService.js` with login/session management
-3. Test SAP connection and basic API calls
+### Immediate (Setup) ✅ DONE
+1. ✅ Add SAP credentials to `.env` file
+2. ✅ Create `server/services/sapService.js` with login/session management
+3. ⬜ Test SAP connection and basic API calls (need SAP_B1_PASSWORD)
 
-### Data Model Updates
-4. Update `productoModel.js` with sapItemCode, legacyCode fields
-5. Update `locacionModel.js` with sapIntegration object
-6. Update `consignacionModel.js` with sapDocNum field
+### Data Model Updates ✅ DONE
+4. ✅ Update `productoModel.js` with sapItemCode, legacyCode fields
+5. ✅ Update `locacionModel.js` with sapIntegration object
+6. ✅ Update `consignacionModel.js` with sapDocNum, sapTransferStatus, lot tracking fields
 
-### Initial Migration (Manual Export)
-7. Map existing locations to SAP warehouses and bin locations (MongoDB updates)
-8. Export inventory from SAP UI (Warehouse 01 + Warehouse 10 with bins)
-9. Run `migrate-from-sap-export.js` script with Excel file
-10. Verify inventory totals match SAP
+### Initial Migration (Manual Export) 🔄 IN PROGRESS
+7. ✅ Map existing locations to SAP warehouses and bin locations (via import-centros.js)
+8. ⬜ Export inventory from SAP UI (Warehouse 01 + Warehouse 10 with bins)
+9. ⬜ Run `migrate-from-sap-export.js` script with CSV file
+10. ⬜ Verify inventory totals match SAP
 
 ### Feature Development
-11. Build Arrival Sync page (`InventoryArrivals.jsx`)
-12. Build BatchSelector component for consignment modal
-13. Integrate SAP StockTransfer creation on consignment confirm
+11. ⬜ Build Arrival Sync page (`InventoryArrivals.jsx`)
+12. ⬜ Build BatchSelector component for consignment modal
+13. ⬜ Integrate SAP StockTransfer creation on consignment confirm
 
 ### Validation
-14. Test full workflow: Arrival → Consignment → SAP Transfer
-15. Verify inventory matches SAP after each operation
+14. ⬜ Test full workflow: Arrival → Consignment → SAP Transfer
+15. ⬜ Verify inventory matches SAP after each operation
