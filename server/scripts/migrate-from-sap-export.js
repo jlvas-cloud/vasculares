@@ -165,17 +165,26 @@ async function migrate() {
 
   // Load all locations for mapping
   const locations = await Locaciones.find({}).lean();
-  const locationByBin = {};
-  const locationByWarehouse = {};
+  const locationByBinAbsEntry = {};  // By AbsEntry number (e.g., 4)
+  const locationByBinCode = {};      // By BinCode string (e.g., "10-CECANOR")
+  const locationByWarehouse = {};    // By warehouse code for WAREHOUSE type
 
   for (const loc of locations) {
     if (loc.sapIntegration?.binAbsEntry) {
-      locationByBin[loc.sapIntegration.binAbsEntry] = loc;
+      locationByBinAbsEntry[loc.sapIntegration.binAbsEntry] = loc;
+    }
+    if (loc.sapIntegration?.binCode) {
+      locationByBinCode[loc.sapIntegration.binCode] = loc;
     }
     if (loc.sapIntegration?.warehouseCode && loc.type === 'WAREHOUSE') {
       locationByWarehouse[loc.sapIntegration.warehouseCode] = loc;
     }
   }
+
+  console.log(`\nLocation mappings loaded:`);
+  console.log(`  - By BinAbsEntry: ${Object.keys(locationByBinAbsEntry).length} centros`);
+  console.log(`  - By BinCode: ${Object.keys(locationByBinCode).length} centros`);
+  console.log(`  - By Warehouse: ${Object.keys(locationByWarehouse).length} warehouses`);
 
   console.log(`\nLoaded ${locations.length} locations`);
 
@@ -243,11 +252,15 @@ async function migrate() {
 
       // Process each batch record for this item
       for (const record of itemRecords) {
-        const batchNum = record.BatchNum || record.DistNumber || 'NO-LOT';
-        const whsCode = record.WhsCode;
-        const quantity = parseInt(record.OnHand || record.Quantity || '0', 10);
-        const expiryDate = parseDate(record.ExpiryDate);
-        const binEntry = record.BinEntry ? parseInt(record.BinEntry, 10) : null;
+        // Support various CSV column name variations
+        const batchNum = record.BatchNum || record.BatchNumber || record.DistNumber || record.Lote || 'NO-LOT';
+        const whsCode = record.WhsCode || record.WarehouseCode || record.Warehouse;
+        const quantity = parseInt(record.OnHand || record.Quantity || record.Qty || record.Cantidad || '0', 10);
+        const expiryDate = parseDate(record.ExpiryDate || record.ExpDate || record.Vencimiento);
+
+        // Bin location - can be AbsEntry (number) or BinCode (string like "10-CECANOR")
+        const binAbsEntry = record.BinEntry || record.BinAbsEntry || record.AbsEntry;
+        const binCode = record.BinCode || record.Ubicacion;
 
         if (quantity <= 0) {
           console.log(`    Batch ${batchNum}: skipped (qty: ${quantity})`);
@@ -255,16 +268,24 @@ async function migrate() {
           continue;
         }
 
-        // Determine location
+        // Determine location - try multiple lookup methods
         let location = null;
-        if (binEntry && locationByBin[binEntry]) {
-          location = locationByBin[binEntry];
-        } else if (whsCode && locationByWarehouse[whsCode]) {
+
+        // 1. Try by BinAbsEntry (numeric)
+        if (binAbsEntry && locationByBinAbsEntry[parseInt(binAbsEntry, 10)]) {
+          location = locationByBinAbsEntry[parseInt(binAbsEntry, 10)];
+        }
+        // 2. Try by BinCode (string like "10-CECANOR")
+        else if (binCode && locationByBinCode[binCode]) {
+          location = locationByBinCode[binCode];
+        }
+        // 3. Try by warehouse code (for main warehouse)
+        else if (whsCode && locationByWarehouse[whsCode]) {
           location = locationByWarehouse[whsCode];
         }
 
         if (!location) {
-          console.log(`    Batch ${batchNum}: skipped (no location for whs ${whsCode}, bin ${binEntry})`);
+          console.log(`    Batch ${batchNum}: skipped (no location for whs ${whsCode}, binAbsEntry ${binAbsEntry}, binCode ${binCode})`);
           stats.skipped++;
           continue;
         }
