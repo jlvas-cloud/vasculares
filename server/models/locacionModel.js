@@ -64,6 +64,22 @@ const locacionSchema = new Schema({
     notificationEmail: String,
   },
 
+  // SAP Business One Integration
+  sapIntegration: {
+    warehouseCode: {
+      type: String,
+      description: 'SAP B1 WarehouseCode - "01" for Principal, "10" for Consignacion',
+    },
+    binAbsEntry: {
+      type: Number,
+      description: 'SAP B1 Bin Location AbsEntry - for CENTROs within warehouse 10',
+    },
+    binCode: {
+      type: String,
+      description: 'SAP B1 Bin Location Code (e.g., "10-CECANOR")',
+    },
+  },
+
   active: {
     type: Boolean,
     default: true,
@@ -94,5 +110,6 @@ const locacionSchema = new Schema({
 locacionSchema.index({ name: 1 });
 locacionSchema.index({ type: 1, active: 1 });
 locacionSchema.index({ active: 1 });
+locacionSchema.index({ 'sapIntegration.binAbsEntry': 1 }, { sparse: true });
 
 module.exports = locacionSchema;

@@ -218,12 +218,46 @@ node scripts/import-orsiro-codes.js
 
 **For Production**: Update `COMPANY_ID` in the script to the production company ID before running.
 
+### Centro Import Script
+
+**Purpose**: Create Centro locations mapped to SAP bin locations.
+
+**Script**: `server/scripts/import-centros.js`
+
+This script:
+1. Creates/updates locations with type='CENTRO' or 'WAREHOUSE'
+2. Sets `sapIntegration` with warehouseCode, binAbsEntry, binCode
+3. Locations are defined in the LOCATIONS array in the script
+
+**Current Centros** (configured in script):
+| Name | BinAbsEntry | BinCode |
+|------|-------------|---------|
+| Almacén Principal | - | - (warehouseCode: 01) |
+| CDC | 3 | 10-CDC |
+| CECANOR | 4 | 10-CECANOR |
+| INCAE | 37 | 10-INCAE |
+| CENICARDIO | 38 | 10-CENICARDIO |
+| CERECA | 40 | 10-CERECA |
+
+**To add new centros**: Edit the LOCATIONS array in the script, or add manually via the app UI (sapIntegration fields are now in the schema).
+
+**Usage**:
+```bash
+# Preview (no changes)
+node scripts/import-centros.js --dry-run
+
+# Run import
+node scripts/import-centros.js
+```
+
+**For Production**: Update `COMPANY_ID` in the script to the production company ID before running.
+
 ### Migration Checklist
 
 - [ ] Run `import-orsiro-codes.js` to create products with code mappings
+- [ ] Run `import-centros.js` to create locations with SAP bin mappings
 - [ ] Export inventory from SAP for Warehouse 01 (Principal)
 - [ ] Export inventory from SAP for Warehouse 10 (Consignacion) with bin locations
-- [ ] Map all locations to SAP warehouse/bin codes (MongoDB updates)
 - [ ] Run `migrate-from-sap-export.js` migration script
 - [ ] Verify totals match SAP
 
@@ -857,6 +891,7 @@ server/
 ├── routes/sap.js                       # SAP API routes
 ├── scripts/import-orsiro-codes.js      # Product code mapping script (READY)
 ├── scripts/orsiro-codes.xlsx           # Source: new codes → legacy codes (READY)
+├── scripts/import-centros.js           # Centro/location import script (READY)
 └── scripts/migrate-from-sap-export.js  # Inventory migration script (reads Excel)
 
 client/src/
@@ -868,8 +903,8 @@ client/src/
 ### Modified Files
 ```
 server/
-├── models/productoModel.js          # Add sapItemCode, legacyCode fields
-├── models/locacionModel.js          # Add sapIntegration object (warehouseCode, binAbsEntry, binCode)
+├── models/productoModel.js          # Add sapItemCode, legacyCode fields (DONE)
+├── models/locacionModel.js          # Add sapIntegration object (DONE)
 ├── models/consignacionModel.js      # Add sapDocNum, sapTransferStatus fields
 ├── controllers/consignaciones.js    # Call SAP StockTransfer on create
 └── routes.js                        # Add SAP routes
