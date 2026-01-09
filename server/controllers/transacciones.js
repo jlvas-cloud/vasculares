@@ -478,7 +478,7 @@ exports.list = async (req, res, next) => {
     await getLocacionesModel(req.companyId);
     const Transacciones = await getTransaccionesModel(req.companyId);
 
-    const { type, productId, locationId, startDate, endDate, limit = 50 } = req.query;
+    const { type, productId, locationId, startDate, endDate, sapSync, limit = 50 } = req.query;
 
     // Build query
     let query = {};
@@ -502,6 +502,14 @@ exports.list = async (req, res, next) => {
       query.transactionDate = {};
       if (startDate) query.transactionDate.$gte = new Date(startDate);
       if (endDate) query.transactionDate.$lte = new Date(endDate);
+    }
+
+    // Filter by SAP sync status
+    if (sapSync === 'synced') {
+      query['sapIntegration.pushed'] = true;
+    } else if (sapSync === 'failed') {
+      query['sapIntegration.pushed'] = false;
+      query['sapIntegration.error'] = { $exists: true, $ne: null };
     }
 
     const transacciones = await Transacciones.find(query)

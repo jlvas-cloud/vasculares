@@ -488,8 +488,11 @@ Add to system settings or a dedicated collection:
 ## SAP Environment
 ```
 Server: https://94.74.64.47:50000/b1s/v1
-Company: HOSPAL_TESTING
+Company: HOSPAL_ENERO (development/testing)
+         HOSPAL_TESTING (legacy - outdated, items missing)
 ```
+
+**Note**: Development database requires manual exchange rate updates for current dates.
 
 ### SAP Warehouses
 | Code | Name | Maps to Vasculares |
@@ -928,12 +931,15 @@ server/
 ├── models/productoModel.js          # Add sapItemCode, legacyCode fields ✅ DONE
 ├── models/locacionModel.js          # Add sapIntegration object ✅ DONE
 ├── models/consignacionModel.js      # Add sapDocNum, sapTransferStatus, loteId/lotNumber ✅ DONE
+├── models/transaccionModel.js       # Add sapIntegration for sync tracking ✅ DONE
 ├── controllers/consignaciones.js    # Call SAP StockTransfer on create (pending)
+├── controllers/transacciones.js     # Add sapSync filter support ✅ DONE
 └── routes.js                        # Add SAP routes ✅ DONE
 
 client/src/
 ├── pages/Locations.jsx              # SAP integration fields in form ✅ DONE
 ├── pages/Planning.jsx               # Batch selector in consignment modal (partially done)
+├── pages/TransactionHistory.jsx     # SAP sync status badges + filter ✅ DONE
 ├── components/Layout.jsx            # Added "Llegadas SAP" menu item ✅ DONE
 └── App.jsx                          # Add route for SapArrivals ✅ DONE
 ```
@@ -981,13 +987,15 @@ client/src/
 18. ⬜ Planning page lot selection (partially implemented)
 
 ### Validation
-19. ⬜ Test full workflow: Arrival → Consignment → SAP Transfer
-20. ⬜ Verify inventory matches SAP after each operation
-21. ⬜ Switch to production SAP database for real testing
+19. ✅ Test Goods Receipt flow: App → Local DB + SAP PurchaseDeliveryNotes ✅ WORKING
+20. ⬜ Test full workflow: Arrival → Consignment → SAP Transfer
+21. ⬜ Verify inventory matches SAP after each operation
+22. ⬜ Switch to production SAP database for real testing
 
 ### Known Issues to Address
-- SAP test database (HOSPAL_TESTING) only has data up to July 2024
+- ✅ ~~SAP test database (HOSPAL_TESTING) only has data up to July 2024~~ - RESOLVED: Switched to HOSPAL_ENERO
 - ✅ ~~PurchaseDeliveryNotes don't embed BatchNumbers~~ - SOLVED: Query BatchNumberDetails by ItemCode + AdmissionDate (see `docs/SAP-BATCH-TRACKING.md`)
+- ⚠️ Development SAP database requires manual exchange rate updates for current dates
 
 ### Documentation
 - `docs/SAP-BATCH-TRACKING.md` - Technical reference for accessing batch/lot info from SAP
@@ -1113,6 +1121,31 @@ POST /api/goods-receipt                - Create goods receipt (local + SAP)
 1. Supplier with SAP CardCode is **required** to create Entrada de Mercancía
 2. Products must have `sapItemCode` configured
 3. TaxCode defaults to 'EXE' (exempt) - configurable in code
+
+#### SAP Sync Tracking ✅ COMPLETE
+
+Transactions now track SAP sync status for visibility:
+
+**Model Update** (`transaccionModel.js`):
+```javascript
+sapIntegration: {
+  pushed: Boolean,        // true if synced, false if failed
+  docEntry: Number,       // SAP Document Entry
+  docNum: Number,         // SAP Document Number
+  docType: String,        // e.g., 'PurchaseDeliveryNotes'
+  error: String,          // Error message if failed
+  syncDate: Date          // When sync was attempted
+}
+```
+
+**Transaction History UI** (`TransactionHistory.jsx`):
+- Green badge `SAP: 4435` for synced receipts
+- Red badge `SAP: Error` with full error message for failed syncs
+- Filter by "Estado SAP" to show only synced or failed transactions
+
+**Controller Update** (`goodsReceipt.js`):
+- After SAP push attempt, updates all transactions with sync status
+- Local inventory is always saved (even if SAP fails) - data safety pattern
 
 #### Phase 2b: Packing List Upload (Pending)
 - [ ] Upload PDF/image of packing list

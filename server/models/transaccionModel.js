@@ -105,6 +105,35 @@ const transaccionSchema = new Schema({
     url: String,
     uploadDate: Date,
   }],
+
+  // SAP Integration
+  sapIntegration: {
+    pushed: {
+      type: Boolean,
+      default: false,
+      description: 'Whether this transaction was pushed to SAP',
+    },
+    docEntry: {
+      type: Number,
+      description: 'SAP Document Entry number',
+    },
+    docNum: {
+      type: Number,
+      description: 'SAP Document Number',
+    },
+    docType: {
+      type: String,
+      description: 'SAP document type (e.g., PurchaseDeliveryNotes, StockTransfers)',
+    },
+    error: {
+      type: String,
+      description: 'Error message if SAP push failed',
+    },
+    syncDate: {
+      type: Date,
+      description: 'When SAP sync was attempted',
+    },
+  },
 }, { timestamps: true });
 
 // Indexes
@@ -114,5 +143,6 @@ transaccionSchema.index({ fromLocationId: 1, transactionDate: -1 });
 transaccionSchema.index({ toLocationId: 1, transactionDate: -1 });
 transaccionSchema.index({ lotId: 1 });
 transaccionSchema.index({ transactionDate: -1 });
+transaccionSchema.index({ 'sapIntegration.pushed': 1 }); // Find unsynced transactions
 
 module.exports = transaccionSchema;

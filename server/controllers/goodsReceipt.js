@@ -248,6 +248,33 @@ exports.createGoodsReceipt = async (req, res, next) => {
           };
         }
       }
+
+      // Update all transactions with SAP sync status
+      const Transacciones = await getTransaccionesModel(req.companyId);
+      const sapIntegrationData = {
+        pushed: sapResult?.success || false,
+        syncDate: new Date(),
+        ...(sapResult?.success && {
+          docEntry: sapResult.sapDocEntry,
+          docNum: sapResult.sapDocNum,
+          docType: sapResult.sapDocType || 'PurchaseDeliveryNotes',
+        }),
+        ...(!sapResult?.success && {
+          error: sapResult?.error || 'Unknown error',
+        }),
+      };
+
+      // Update all transactions created in this receipt
+      const transactionIds = transactions.map(t => t._id);
+      await Transacciones.updateMany(
+        { _id: { $in: transactionIds } },
+        { $set: { sapIntegration: sapIntegrationData } }
+      );
+
+      // Update the transactions array with SAP info for response
+      transactions.forEach(t => {
+        t.sapIntegration = sapIntegrationData;
+      });
     }
 
     res.status(201).json({

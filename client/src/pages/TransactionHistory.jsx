@@ -6,7 +6,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '.
 import { Input } from '../components/ui/input';
 import { Label } from '../components/ui/label';
 import { Button } from '../components/ui/button';
-import { History, Package, TrendingUp, Activity, Filter, X } from 'lucide-react';
+import { History, Package, TrendingUp, Activity, Filter, X, CheckCircle2, XCircle, Cloud, CloudOff } from 'lucide-react';
+import { Badge } from '../components/ui/badge';
 import { formatDate } from '../lib/utils';
 
 const transactionTypes = {
@@ -22,6 +23,7 @@ export default function TransactionHistory() {
     locationId: '',
     startDate: '',
     endDate: '',
+    sapSync: '', // 'synced', 'failed', 'pending', or ''
   });
 
   const { data: transactions, isLoading } = useQuery({
@@ -33,6 +35,7 @@ export default function TransactionHistory() {
       if (filters.locationId) params.locationId = filters.locationId;
       if (filters.startDate) params.startDate = filters.startDate;
       if (filters.endDate) params.endDate = filters.endDate;
+      if (filters.sapSync) params.sapSync = filters.sapSync;
       return transaccionesApi.getAll(params).then((res) => res.data);
     },
   });
@@ -58,7 +61,31 @@ export default function TransactionHistory() {
       locationId: '',
       startDate: '',
       endDate: '',
+      sapSync: '',
     });
+  };
+
+  // Helper to get SAP sync status display info
+  const getSapSyncStatus = (transaction) => {
+    const sap = transaction.sapIntegration;
+    if (!sap || sap.pushed === undefined) {
+      return { status: 'none', label: null, icon: null, color: null };
+    }
+    if (sap.pushed) {
+      return {
+        status: 'synced',
+        label: `SAP: ${sap.docNum || sap.docEntry}`,
+        icon: CheckCircle2,
+        color: 'bg-green-100 text-green-700 border-green-200',
+      };
+    }
+    return {
+      status: 'failed',
+      label: 'SAP: Error',
+      icon: XCircle,
+      color: 'bg-red-100 text-red-700 border-red-200',
+      error: sap.error,
+    };
   };
 
   const hasActiveFilters = Object.values(filters).some((val) => val !== '');
@@ -156,6 +183,30 @@ export default function TransactionHistory() {
                 onChange={(e) => handleFilterChange('endDate', e.target.value)}
               />
             </div>
+
+            <div className="grid gap-2">
+              <Label>Estado SAP</Label>
+              <Select value={filters.sapSync || 'all'} onValueChange={(val) => handleFilterChange('sapSync', val === 'all' ? '' : val)}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Todos" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">Todos</SelectItem>
+                  <SelectItem value="synced">
+                    <span className="flex items-center gap-2">
+                      <CheckCircle2 className="h-3 w-3 text-green-600" />
+                      Sincronizado
+                    </span>
+                  </SelectItem>
+                  <SelectItem value="failed">
+                    <span className="flex items-center gap-2">
+                      <XCircle className="h-3 w-3 text-red-600" />
+                      Error SAP
+                    </span>
+                  </SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
           </div>
         </CardContent>
       </Card>
@@ -172,6 +223,8 @@ export default function TransactionHistory() {
               {transactions.map((transaction) => {
                 const typeInfo = transactionTypes[transaction.type];
                 const Icon = typeInfo?.icon || History;
+                const sapStatus = getSapSyncStatus(transaction);
+                const SapIcon = sapStatus.icon;
 
                 return (
                   <div
@@ -185,8 +238,14 @@ export default function TransactionHistory() {
                     <div className="flex-1 space-y-1">
                       <div className="flex items-start justify-between">
                         <div>
-                          <div className="font-medium">
+                          <div className="font-medium flex items-center gap-2">
                             {typeInfo?.label} - {transaction.productId?.name || 'N/A'}
+                            {sapStatus.label && (
+                              <Badge variant="outline" className={`text-xs ${sapStatus.color}`}>
+                                {SapIcon && <SapIcon className="h-3 w-3 mr-1" />}
+                                {sapStatus.label}
+                              </Badge>
+                            )}
                           </div>
                           <div className="text-sm text-muted-foreground">
                             Lote: {transaction.lotNumber} | Cantidad: {transaction.quantity}
@@ -218,6 +277,12 @@ export default function TransactionHistory() {
 
                       {transaction.notes && (
                         <div className="text-xs text-muted-foreground italic">Notas: {transaction.notes}</div>
+                      )}
+
+                      {sapStatus.error && (
+                        <div className="text-xs text-red-600 bg-red-50 px-2 py-1 rounded mt-1">
+                          Error SAP: {sapStatus.error}
+                        </div>
                       )}
 
                       <div className="text-xs text-muted-foreground">
