@@ -261,21 +261,26 @@ exports.getInventoryForPlanning = async (req, res, next) => {
   }
 };
 
+// Default suppliers to track for arrivals (can be configured)
+const TRACKED_SUPPLIERS = [
+  { cardCode: 'BIOTRONIK', cardName: 'BIOTRONIK AG' },
+];
+
 /**
- * GET /api/sap/arrivals
- * Get recent goods receipts from SAP (for arrival sync feature)
+ * GET /api/sap/suppliers
+ * Get list of suppliers (business partners) from SAP
  */
-exports.getArrivals = async (req, res, next) => {
+exports.getSuppliers = async (req, res, next) => {
   try {
-    const { since, warehouse = '01' } = req.query;
+    const { search } = req.query;
     await sapService.ensureSession();
 
-    // Query PurchaseDeliveryNotes (Goods Receipt PO)
-    let url = `${sapService.SAP_CONFIG.serviceUrl}/PurchaseDeliveryNotes?$top=50&$orderby=DocDate desc`;
-    url += `&$select=DocNum,DocDate,CardName,DocumentLines`;
+    let url = `${sapService.SAP_CONFIG.serviceUrl}/BusinessPartners?$top=50`;
+    url += `&$select=CardCode,CardName,CardType`;
+    url += `&$filter=CardType eq 'cSupplier'`;
 
-    if (since) {
-      url += `&$filter=DocDate ge '${since}'`;
+    if (search) {
+      url += ` and (contains(CardName,'${search}') or contains(CardCode,'${search}'))`;
     }
 
     const response = await fetch(url, {
@@ -283,7 +288,58 @@ exports.getArrivals = async (req, res, next) => {
         'Content-Type': 'application/json',
         'Cookie': `B1SESSION=${await sapService.ensureSession()}`,
       },
-      agent: require('https').Agent({ rejectUnauthorized: false }),
+    });
+
+    if (!response.ok) {
+      throw new Error(`Failed to fetch suppliers: ${response.statusText}`);
+    }
+
+    const data = await response.json();
+    res.json(data.value || []);
+  } catch (error) {
+    console.error('Error fetching SAP suppliers:', error);
+    next(error);
+  }
+};
+
+/**
+ * GET /api/sap/arrivals
+ * Get recent goods receipts from SAP (for arrival sync feature)
+ *
+ * Query params:
+ * - since: Date filter (YYYY-MM-DD)
+ * - supplier: Supplier CardCode to filter by (e.g., 'BIOTRONIK')
+ * - warehouse: Warehouse code (default '01')
+ */
+exports.getArrivals = async (req, res, next) => {
+  try {
+    const { since, supplier, warehouse = '01' } = req.query;
+    await sapService.ensureSession();
+
+    // Build filter for PurchaseDeliveryNotes (Goods Receipt PO)
+    const filters = [];
+
+    if (since) {
+      filters.push(`DocDate ge '${since}'`);
+    }
+
+    if (supplier) {
+      // Filter by supplier CardCode
+      filters.push(`CardCode eq '${supplier}'`);
+    }
+
+    let url = `${sapService.SAP_CONFIG.serviceUrl}/PurchaseDeliveryNotes?$top=100&$orderby=DocDate desc`;
+    url += `&$select=DocNum,DocDate,CardCode,CardName,DocumentLines`;
+
+    if (filters.length > 0) {
+      url += `&$filter=${filters.join(' and ')}`;
+    }
+
+    const response = await fetch(url, {
+      headers: {
+        'Content-Type': 'application/json',
+        'Cookie': `B1SESSION=${await sapService.ensureSession()}`,
+      },
     });
 
     if (!response.ok) {
@@ -292,15 +348,22 @@ exports.getArrivals = async (req, res, next) => {
 
     const data = await response.json();
 
-    // Process and filter to batch-managed items
+    // Process and filter to batch-managed items only
     const arrivals = [];
     for (const doc of data.value || []) {
       for (const line of doc.DocumentLines || []) {
+        // Only include items with batch numbers (batch-managed)
         if (line.BatchNumbers && line.BatchNumbers.length > 0) {
+          // Filter by warehouse if specified
+          if (warehouse && line.WarehouseCode !== warehouse) {
+            continue;
+          }
+
           arrivals.push({
             sapDocNum: doc.DocNum,
             docDate: doc.DocDate,
-            supplier: doc.CardName,
+            supplierCode: doc.CardCode,
+            supplierName: doc.CardName,
             itemCode: line.ItemCode,
             itemName: line.ItemDescription,
             warehouseCode: line.WarehouseCode,
@@ -309,12 +372,21 @@ exports.getArrivals = async (req, res, next) => {
               quantity: b.Quantity,
               expiryDate: b.ExpiryDate,
             })),
+            totalQuantity: line.BatchNumbers.reduce((sum, b) => sum + b.Quantity, 0),
           });
         }
       }
     }
 
-    res.json({ arrivals });
+    res.json({
+      arrivals,
+      filters: {
+        since,
+        supplier,
+        warehouse,
+      },
+      trackedSuppliers: TRACKED_SUPPLIERS,
+    });
   } catch (error) {
     console.error('Error fetching SAP arrivals:', error);
     next(error);
