@@ -134,6 +134,10 @@ export const goodsReceiptApi = {
   getProducts: (search) => api.get('/goods-receipt/products', { params: { search } }),
   getWarehouses: () => api.get('/goods-receipt/warehouses'),
   create: (data) => api.post('/goods-receipt', data),
+  // History and management
+  getHistory: (params) => api.get('/goods-receipt/history', { params }),
+  getOne: (id) => api.get(`/goods-receipt/${id}`),
+  retrySap: (id) => api.post(`/goods-receipt/${id}/retry-sap`),
 };
 
 export default api;

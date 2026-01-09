@@ -10,6 +10,7 @@ const ordenCompraSchema = require('./models/ordenCompraModel');
 const loteSchema = require('./models/loteModel');
 const inventarioObjetivosSchema = require('./models/inventarioObjetivosModel');
 const consignacionSchema = require('./models/consignacionModel');
+const goodsReceiptSchema = require('./models/goodsReceiptModel');
 const usersSchema = require('./models/usersModel');
 const companySchema = require('./models/companyModel');
 
@@ -126,6 +127,16 @@ exports.getInventarioObjetivosModel = async (companyId) => {
 exports.getConsignacionesModel = async (companyId) => {
   const db = await getVascularesDb(companyId, 'consignaciones', consignacionSchema);
   return db.model('consignaciones');
+};
+
+/**
+ * Get GoodsReceipts model for a specific company
+ * Stored in: {companyId}_vasculares database
+ * Tracks goods receipts (Entradas de Mercancía) created from the app
+ */
+exports.getGoodsReceiptsModel = async (companyId) => {
+  const db = await getVascularesDb(companyId, 'goodsreceipts', goodsReceiptSchema);
+  return db.model('goodsreceipts');
 };
 
 // ============================================

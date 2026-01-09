@@ -1,14 +1,15 @@
 /**
  * Goods Receipt Controller
  * Handle goods receipts with SAP integration
- * Creates local lotes/inventory AND pushes to SAP InventoryGenEntries
+ * Creates local lotes/inventory AND pushes to SAP PurchaseDeliveryNotes
  */
 const {
   getLotesModel,
   getInventarioModel,
   getProductosModel,
   getLocacionesModel,
-  getTransaccionesModel
+  getTransaccionesModel,
+  getGoodsReceiptsModel
 } = require('../getModel');
 const sapService = require('../services/sapService');
 
@@ -277,9 +278,50 @@ exports.createGoodsReceipt = async (req, res, next) => {
       });
     }
 
+    // Save to GoodsReceipts collection for history tracking
+    const GoodsReceipts = await getGoodsReceiptsModel(req.companyId);
+    const goodsReceipt = new GoodsReceipts({
+      receiptDate: new Date(),
+      locationId,
+      locationName: location.name,
+      sapWarehouseCode,
+      supplier,
+      supplierCode,
+      notes,
+      items: items.map((item, idx) => {
+        const product = productMap[item.productId];
+        return {
+          productId: item.productId,
+          productName: product.name,
+          sapItemCode: product.sapItemCode,
+          lotNumber: item.lotNumber,
+          quantity: item.quantity,
+          expiryDate: new Date(item.expiryDate),
+          loteId: createdLotes[idx]._id,
+          transactionId: transactions[idx]._id
+        };
+      }),
+      sapIntegration: {
+        pushed: sapResult?.success || false,
+        docEntry: sapResult?.sapDocEntry,
+        docNum: sapResult?.sapDocNum,
+        docType: sapResult?.sapDocType || 'PurchaseDeliveryNotes',
+        error: sapResult?.success ? undefined : (sapResult?.error || 'Unknown error'),
+        syncDate: new Date(),
+        retryCount: 0
+      },
+      createdBy: {
+        _id: req.user._id,
+        firstname: req.user.firstname,
+        lastname: req.user.lastname
+      }
+    });
+    await goodsReceipt.save();
+
     res.status(201).json({
       success: true,
       message: 'Goods receipt created successfully',
+      receiptId: goodsReceipt._id,
       lotes: createdLotes,
       transactions,
       sapResult
@@ -401,6 +443,175 @@ exports.getWarehouses = async (req, res, next) => {
     res.json(warehouses);
   } catch (error) {
     console.error('Error fetching warehouses:', error);
+    next(error);
+  }
+};
+
+/**
+ * GET /api/goods-receipt/history
+ * List all goods receipts with optional filters
+ * Query params: sapStatus (synced/failed/all), startDate, endDate, limit
+ */
+exports.listGoodsReceipts = async (req, res, next) => {
+  try {
+    const { sapStatus, startDate, endDate, limit = 50 } = req.query;
+    const GoodsReceipts = await getGoodsReceiptsModel(req.companyId);
+
+    // Build query
+    const query = {};
+
+    if (sapStatus === 'synced') {
+      query['sapIntegration.pushed'] = true;
+    } else if (sapStatus === 'failed') {
+      query['sapIntegration.pushed'] = false;
+    }
+
+    if (startDate || endDate) {
+      query.receiptDate = {};
+      if (startDate) query.receiptDate.$gte = new Date(startDate);
+      if (endDate) query.receiptDate.$lte = new Date(endDate);
+    }
+
+    const receipts = await GoodsReceipts.find(query)
+      .sort({ receiptDate: -1 })
+      .limit(parseInt(limit))
+      .lean();
+
+    res.json(receipts);
+  } catch (error) {
+    console.error('Error listing goods receipts:', error);
+    next(error);
+  }
+};
+
+/**
+ * GET /api/goods-receipt/:id
+ * Get a single goods receipt by ID
+ */
+exports.getGoodsReceipt = async (req, res, next) => {
+  try {
+    const GoodsReceipts = await getGoodsReceiptsModel(req.companyId);
+    const receipt = await GoodsReceipts.findById(req.params.id).lean();
+
+    if (!receipt) {
+      return res.status(404).json({ error: 'Goods receipt not found' });
+    }
+
+    res.json(receipt);
+  } catch (error) {
+    console.error('Error fetching goods receipt:', error);
+    next(error);
+  }
+};
+
+/**
+ * POST /api/goods-receipt/:id/retry-sap
+ * Retry SAP push for a failed goods receipt
+ */
+exports.retrySapPush = async (req, res, next) => {
+  try {
+    const GoodsReceipts = await getGoodsReceiptsModel(req.companyId);
+    const receipt = await GoodsReceipts.findById(req.params.id);
+
+    if (!receipt) {
+      return res.status(404).json({ error: 'Goods receipt not found' });
+    }
+
+    // Check if already synced
+    if (receipt.sapIntegration?.pushed) {
+      return res.status(400).json({
+        error: 'This receipt is already synced with SAP',
+        sapDocNum: receipt.sapIntegration.docNum
+      });
+    }
+
+    // Validate supplier code exists
+    if (!receipt.supplierCode) {
+      return res.status(400).json({
+        error: 'Supplier code is required for SAP integration'
+      });
+    }
+
+    // Get products for SAP item codes
+    const Productos = await getProductosModel(req.companyId);
+    const productIds = receipt.items.map(i => i.productId);
+    const products = await Productos.find({ _id: { $in: productIds } });
+
+    const productMap = {};
+    for (const p of products) {
+      productMap[p._id.toString()] = p;
+    }
+
+    // Rebuild items array for SAP push
+    const itemsForSap = receipt.items.map(item => ({
+      productId: item.productId.toString(),
+      lotNumber: item.lotNumber,
+      quantity: item.quantity,
+      expiryDate: item.expiryDate
+    }));
+
+    // Push to SAP
+    let sapResult;
+    try {
+      sapResult = await pushToSapGoodsReceipt({
+        items: itemsForSap,
+        productMap,
+        sapWarehouseCode: receipt.sapWarehouseCode || '01',
+        supplier: receipt.supplier,
+        supplierCode: receipt.supplierCode,
+        notes: receipt.notes
+      });
+    } catch (sapError) {
+      console.error('SAP retry push failed:', sapError);
+      sapResult = {
+        success: false,
+        error: sapError.message
+      };
+    }
+
+    // Update receipt with new SAP status
+    receipt.sapIntegration = {
+      pushed: sapResult?.success || false,
+      docEntry: sapResult?.sapDocEntry,
+      docNum: sapResult?.sapDocNum,
+      docType: sapResult?.sapDocType || 'PurchaseDeliveryNotes',
+      error: sapResult?.success ? undefined : (sapResult?.error || 'Unknown error'),
+      syncDate: new Date(),
+      retryCount: (receipt.sapIntegration?.retryCount || 0) + 1
+    };
+    await receipt.save();
+
+    // If successful, also update the transactions
+    if (sapResult?.success) {
+      const Transacciones = await getTransaccionesModel(req.companyId);
+      const transactionIds = receipt.items.map(i => i.transactionId).filter(Boolean);
+
+      if (transactionIds.length > 0) {
+        await Transacciones.updateMany(
+          { _id: { $in: transactionIds } },
+          {
+            $set: {
+              'sapIntegration.pushed': true,
+              'sapIntegration.docEntry': sapResult.sapDocEntry,
+              'sapIntegration.docNum': sapResult.sapDocNum,
+              'sapIntegration.docType': 'PurchaseDeliveryNotes',
+              'sapIntegration.syncDate': new Date(),
+              'sapIntegration.error': null
+            }
+          }
+        );
+      }
+    }
+
+    res.json({
+      success: sapResult?.success || false,
+      message: sapResult?.success ? 'SAP sync successful' : 'SAP sync failed',
+      receipt: receipt.toObject(),
+      sapResult
+    });
+
+  } catch (error) {
+    console.error('Error retrying SAP push:', error);
     next(error);
   }
 };

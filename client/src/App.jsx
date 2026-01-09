@@ -15,6 +15,7 @@ import TransactionHistory from './pages/TransactionHistory';
 import Planning from './pages/Planning';
 import Consignaciones from './pages/Consignaciones';
 import GoodsReceipt from './pages/GoodsReceipt';
+import GoodsReceiptHistory from './pages/GoodsReceiptHistory';
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -60,6 +61,7 @@ function App() {
                         <Route path="/planning" element={<Planning />} />
                         <Route path="/consignaciones" element={<Consignaciones />} />
                         <Route path="/goods-receipt" element={<GoodsReceipt />} />
+                        <Route path="/goods-receipt-history" element={<GoodsReceiptHistory />} />
                       </Routes>
                     </Layout>
                   </PrivateRoute>

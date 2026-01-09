@@ -22,4 +22,9 @@ router.get('/products', goodsReceiptController.getProductsForReceipt);
 router.get('/warehouses', goodsReceiptController.getWarehouses);
 router.post('/', validateGoodsReceipt, goodsReceiptController.createGoodsReceipt);
 
+// History and management
+router.get('/history', goodsReceiptController.listGoodsReceipts);
+router.get('/:id', goodsReceiptController.getGoodsReceipt);
+router.post('/:id/retry-sap', goodsReceiptController.retrySapPush);
+
 module.exports = router;
