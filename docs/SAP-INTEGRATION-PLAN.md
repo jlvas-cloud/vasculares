@@ -954,11 +954,11 @@ client/src/
 9. ⬜ Run `migrate-from-sap-export.js` script with CSV file
 10. ⬜ Verify inventory totals match SAP
 
-### Arrival Sync Feature ✅ PARTIALLY DONE
+### Arrival Sync Feature ✅ MOSTLY DONE
 11. ✅ Build Arrival Sync page (`SapArrivals.jsx`)
 12. ✅ Add SAP API client (`sapApi` in api.js)
 13. ✅ Arrivals display working with supplier/date filters
-14. ⬜ **Enhancement needed:** Query BatchNumberDetails for actual batch info (currently shows N/A)
+14. ✅ Query BatchNumberDetails for batch info (see `docs/SAP-BATCH-TRACKING.md`)
 15. ⬜ Test import functionality (warehouse receipt creation)
 
 ### Feature Development (Remaining)
@@ -973,5 +973,7 @@ client/src/
 
 ### Known Issues to Address
 - SAP test database (HOSPAL_TESTING) only has data up to July 2024
-- PurchaseDeliveryNotes don't embed BatchNumbers - need separate query to BatchNumberDetails table
-- Items have `ManageBatchNumbers: "tYES"` but batches stored separately
+- ✅ ~~PurchaseDeliveryNotes don't embed BatchNumbers~~ - SOLVED: Query BatchNumberDetails by ItemCode + AdmissionDate (see `docs/SAP-BATCH-TRACKING.md`)
+
+### Documentation
+- `docs/SAP-BATCH-TRACKING.md` - Technical reference for accessing batch/lot info from SAP

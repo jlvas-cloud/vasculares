@@ -303,6 +303,42 @@ exports.getSuppliers = async (req, res, next) => {
 };
 
 /**
+ * Helper to fetch batch details from BatchNumberDetails table
+ * @param {string} itemCode - SAP item code
+ * @param {string} admissionDate - Date in YYYY-MM-DD format
+ * @param {string} sessionId - SAP session ID
+ * @returns {Array} - Array of batch objects
+ */
+async function fetchBatchDetails(itemCode, admissionDate, sessionId) {
+  try {
+    // Query BatchNumberDetails for this item on this date
+    const url = `${sapService.SAP_CONFIG.serviceUrl}/BatchNumberDetails?$filter=ItemCode eq '${itemCode}' and AdmissionDate eq '${admissionDate}'`;
+
+    const response = await fetch(url, {
+      headers: {
+        'Content-Type': 'application/json',
+        'Cookie': `B1SESSION=${sessionId}`,
+      },
+    });
+
+    if (!response.ok) {
+      console.warn(`Failed to fetch batch details for ${itemCode}: ${response.statusText}`);
+      return [];
+    }
+
+    const data = await response.json();
+    return (data.value || []).map(b => ({
+      batchNumber: b.Batch,
+      expiryDate: b.ExpirationDate,
+      admissionDate: b.AdmissionDate,
+    }));
+  } catch (err) {
+    console.warn(`Error fetching batch details for ${itemCode}:`, err.message);
+    return [];
+  }
+}
+
+/**
  * GET /api/sap/arrivals
  * Get recent goods receipts from SAP (for arrival sync feature)
  *
@@ -314,7 +350,7 @@ exports.getSuppliers = async (req, res, next) => {
 exports.getArrivals = async (req, res, next) => {
   try {
     const { since, supplier, warehouse = '01' } = req.query;
-    await sapService.ensureSession();
+    const sessionId = await sapService.ensureSession();
 
     // Build filter for PurchaseDeliveryNotes (Goods Receipt PO)
     const filters = [];
@@ -338,7 +374,7 @@ exports.getArrivals = async (req, res, next) => {
     const response = await fetch(url, {
       headers: {
         'Content-Type': 'application/json',
-        'Cookie': `B1SESSION=${await sapService.ensureSession()}`,
+        'Cookie': `B1SESSION=${sessionId}`,
       },
     });
 
@@ -351,14 +387,45 @@ exports.getArrivals = async (req, res, next) => {
     // Process arrivals - include all items
     const arrivals = [];
     for (const doc of data.value || []) {
+      // Extract date part for BatchNumberDetails query (YYYY-MM-DD)
+      const docDateStr = doc.DocDate.split('T')[0];
+
       for (const line of doc.DocumentLines || []) {
         // Filter by warehouse if specified
         if (warehouse && line.WarehouseCode !== warehouse) {
           continue;
         }
 
-        // Check if item has batch numbers
-        const hasBatches = line.BatchNumbers && line.BatchNumbers.length > 0;
+        // Check if item has batch numbers embedded in the document
+        const hasBatchesInDoc = line.BatchNumbers && line.BatchNumbers.length > 0;
+
+        let batches;
+        if (hasBatchesInDoc) {
+          // Use embedded batch info (rare, but possible in some SAP configs)
+          batches = line.BatchNumbers.map(b => ({
+            batchNumber: b.BatchNumber,
+            quantity: b.Quantity,
+            expiryDate: b.ExpiryDate,
+          }));
+        } else {
+          // Query BatchNumberDetails table for batch info
+          const batchDetails = await fetchBatchDetails(line.ItemCode, docDateStr, sessionId);
+
+          if (batchDetails.length > 0) {
+            // Found batches - distribute quantity evenly (best approximation)
+            const qtyPerBatch = Math.floor(line.Quantity / batchDetails.length);
+            const remainder = line.Quantity % batchDetails.length;
+
+            batches = batchDetails.map((b, idx) => ({
+              batchNumber: b.batchNumber,
+              quantity: qtyPerBatch + (idx < remainder ? 1 : 0),
+              expiryDate: b.expiryDate,
+            }));
+          } else {
+            // No batch info found
+            batches = [{ batchNumber: 'N/A', quantity: line.Quantity, expiryDate: null }];
+          }
+        }
 
         arrivals.push({
           sapDocNum: doc.DocNum,
@@ -368,16 +435,8 @@ exports.getArrivals = async (req, res, next) => {
           itemCode: line.ItemCode,
           itemName: line.ItemDescription,
           warehouseCode: line.WarehouseCode,
-          batches: hasBatches
-            ? line.BatchNumbers.map(b => ({
-                batchNumber: b.BatchNumber,
-                quantity: b.Quantity,
-                expiryDate: b.ExpiryDate,
-              }))
-            : [{ batchNumber: 'N/A', quantity: line.Quantity, expiryDate: null }],
-          totalQuantity: hasBatches
-            ? line.BatchNumbers.reduce((sum, b) => sum + b.Quantity, 0)
-            : line.Quantity,
+          batches,
+          totalQuantity: line.Quantity,
         });
       }
     }
