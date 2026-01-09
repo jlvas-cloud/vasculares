@@ -79,90 +79,129 @@ Integrate vasculares app with SAP B1 to create stock transfers directly from the
 ## Initial Migration
 
 ### Purpose
-Import current SAP inventory into vasculares to bootstrap the system.
+Import current SAP inventory into vasculares to bootstrap the system. This is a **one-time setup** before going live.
 
-### What to Import
-1. **Products** (Items with ManageBatchNumbers = 'tYES')
-   - ItemCode → sapItemCode
-   - ItemName → name
-   - Create with category 'STENTS_CORONARIOS' or 'GUIAS'
+### Approach: Manual Export + Script Import
 
-2. **Locations** (Warehouses + Bin Locations)
-   - Map existing centros to SAP bin locations
-   - Create any missing locations
+We'll use a manual export from SAP UI because the Service Layer API doesn't expose batch quantities per warehouse directly (OIBT table not accessible via REST).
 
-3. **Inventory** (Batch stock per warehouse/bin)
-   - Current quantities per location
-   - Lot numbers and expiry dates
-
-### SAP API Endpoints for Migration
-
-```javascript
-// 1. Get all batch-managed items
-GET /b1s/v1/Items?$filter=ManageBatchNumbers eq 'tYES'
-    &$select=ItemCode,ItemName,ItemWarehouseInfoCollection
-
-// 2. Get batch details for each item
-GET /b1s/v1/BatchNumberDetails?$filter=ItemCode eq '{itemCode}'
-
-// 3. Get bin locations
-GET /b1s/v1/BinLocations?$filter=Warehouse eq '10'
-
-// 4. Get stock per warehouse (from Item)
-GET /b1s/v1/Items('{itemCode}')?$select=ItemCode,ItemWarehouseInfoCollection
+```
+┌─────────────────┐     ┌─────────────────┐     ┌─────────────────┐
+│   SAP B1 UI     │     │  Excel/CSV      │     │   Vasculares    │
+│                 │     │                 │     │                 │
+│  Export Report  │ ──▶ │  Inventory      │ ──▶ │  Import Script  │
+│  - By warehouse │     │  - Products     │     │  - Products     │
+│  - With batches │     │  - Lots         │     │  - Lotes        │
+│  - With bins    │     │  - Quantities   │     │  - Inventario   │
+└─────────────────┘     └─────────────────┘     └─────────────────┘
 ```
 
-### Migration Challenge: Batch Quantities per Location
+### SAP Export Requirements
 
-**Problem**: SAP Service Layer doesn't expose the OIBT (Item Batches) table directly, which contains batch quantities per warehouse.
+Export an inventory report from SAP with these columns:
 
-**Solutions**:
+| Column | Example | Required | Maps to |
+|--------|---------|----------|---------|
+| ItemCode | 364481 | Yes | Product.sapItemCode |
+| ItemName | Stent Coronario Orsiro 2.25/15 | Yes | Product.name |
+| Warehouse | 01 | Yes | Location.sapIntegration.warehouseCode |
+| BinCode | 10-CECANOR | If WH=10 | Location.sapIntegration.binCode |
+| BatchNumber | 06253084 | Yes | Lote.lotNumber |
+| Quantity | 2 | Yes | Lote.quantityAvailable |
+| ExpiryDate | 2028-07-09 | Yes | Lote.expiryDate |
 
-| Option | Description | Effort |
-|--------|-------------|--------|
-| **A. Query workaround** | Use StockTransfer history to calculate current batch locations | High |
-| **B. Custom B1 query** | Create SQL query in SAP B1 and expose via SQLQueries | Medium |
-| **C. Semantic Layer** | Enable semantic layer in SAP for OIBT view | Low (if available) |
-| **D. Manual export** | Export from SAP UI, import via script | Quick but manual |
+**Note**: Need separate exports or filtered views for:
+- Warehouse 01 (Principal) - no bin codes
+- Warehouse 10 (Consignacion) - with bin codes for each centro
 
-**Recommended**: Option B or D for initial migration, then implement proper sync.
-
-### Migration Script Structure
+### Migration Script
 
 ```javascript
-// server/scripts/migrate-from-sap.js
+// server/scripts/migrate-from-sap-export.js
 
-async function migrateFromSAP() {
-  // 1. Connect to SAP
-  await sapService.login();
+const xlsx = require('xlsx');
+const path = require('path');
 
-  // 2. Get all bin locations → create Locations
-  const bins = await sapService.getBinLocations('10');
-  for (const bin of bins) {
-    await createOrUpdateLocation(bin);
+async function migrateFromExport(filePath) {
+  // 1. Read Excel file
+  const workbook = xlsx.readFile(filePath);
+  const sheet = workbook.Sheets[workbook.SheetNames[0]];
+  const rows = xlsx.utils.sheet_to_json(sheet);
+
+  console.log(`Found ${rows.length} rows to import`);
+
+  // 2. Get or create locations (warehouse + bins)
+  const locationMap = await ensureLocations(rows);
+
+  // 3. Get or create products
+  const productMap = await ensureProducts(rows);
+
+  // 4. Create lotes at correct locations
+  for (const row of rows) {
+    const product = productMap[row.ItemCode];
+    const location = locationMap[row.BinCode || row.Warehouse];
+
+    // Check if lote already exists
+    let lote = await Lotes.findOne({
+      productId: product._id,
+      lotNumber: row.BatchNumber,
+      locationId: location._id
+    });
+
+    if (!lote) {
+      lote = new Lotes({
+        productId: product._id,
+        lotNumber: row.BatchNumber,
+        expiryDate: parseDate(row.ExpiryDate),
+        quantityTotal: row.Quantity,
+        quantityAvailable: row.Quantity,
+        quantityReserved: 0,
+        locationId: location._id,
+        supplier: 'BIOTRONIK AG',
+        status: 'AVAILABLE',
+        source: 'SAP_MIGRATION'
+      });
+      await lote.save();
+    }
   }
 
-  // 3. Get all batch-managed items → create Products
-  const items = await sapService.getBatchManagedItems();
-  for (const item of items) {
-    await createOrUpdateProduct(item);
-  }
+  // 5. Update inventory aggregations
+  await updateAllInventario(productMap, locationMap);
 
-  // 4. Get batch stock (requires workaround)
-  // Option A: Use exported CSV
-  // Option B: Query custom SQL view
-  const batchStock = await getBatchStockData();
-
-  // 5. Create Lotes and update Inventory
-  for (const stock of batchStock) {
-    await createLote(stock);
-    await updateInventario(stock.productId, stock.locationId);
-  }
-
-  // 6. Log summary
+  // 6. Summary
   console.log('Migration complete');
+  console.log(`Products: ${Object.keys(productMap).length}`);
+  console.log(`Locations: ${Object.keys(locationMap).length}`);
+  console.log(`Lotes: ${rows.length}`);
 }
 ```
+
+### Pre-Migration: Location Mapping
+
+Before running the import, map existing vasculares locations to SAP:
+
+```javascript
+// Run once to set up location mappings
+db.locaciones.updateOne(
+  { name: "Almacén Principal", type: "WAREHOUSE" },
+  { $set: { sapIntegration: { warehouseCode: "01" } } }
+);
+
+db.locaciones.updateOne(
+  { name: "CECANOR", type: "CENTRO" },
+  { $set: { sapIntegration: { warehouseCode: "10", binAbsEntry: 4, binCode: "10-CECANOR" } } }
+);
+// ... repeat for all centers
+```
+
+### Migration Checklist
+
+- [ ] Export inventory from SAP for Warehouse 01 (Principal)
+- [ ] Export inventory from SAP for Warehouse 10 (Consignacion) with bin locations
+- [ ] Combine into single Excel file or run script twice
+- [ ] Map all locations to SAP warehouse/bin codes
+- [ ] Run migration script
+- [ ] Verify totals match SAP
 
 ---
 
@@ -547,19 +586,21 @@ Update models to support SAP integration.
 - `server/controllers/productos.js` - Add mapping endpoint
 - `client/src/pages/Products.jsx` - Add SAP code field in edit form
 
-### Phase 3: Initial Migration
-Import current SAP inventory to bootstrap the system.
+### Phase 3: Initial Migration (Manual Export)
+Import current SAP inventory to bootstrap the system using Excel export.
 
 **Steps:**
-1. Export products and batch stock from SAP (via API or manual export)
-2. Run migration script to create Products with sapItemCode
-3. Map existing Locations to SAP warehouses and bin locations
-4. Import batch stock as Lotes in appropriate locations
-5. Verify inventory matches SAP
+1. Map existing Locations to SAP warehouses and bin locations (run MongoDB updates)
+2. Export inventory from SAP UI (Warehouse 01 and 10 with batch details)
+3. Place Excel file in `server/scripts/` folder
+4. Run migration script to create Products, Lotes, and Inventario
+5. Verify totals match SAP
 
 **Files to create:**
-- `server/scripts/migrate-from-sap.js` - Migration script
-- `server/scripts/map-locations-to-sap.js` - Location mapping helper
+- `server/scripts/migrate-from-sap-export.js` - Migration script (reads Excel)
+
+**Dependencies:**
+- `xlsx` npm package for reading Excel files
 
 ### Phase 4: Arrival Sync (Sincronizar Entradas)
 Sync new product arrivals from SAP to vasculares.
@@ -790,8 +831,7 @@ server/
 ├── services/sapService.js           # SAP API client with session management
 ├── controllers/sap.js               # SAP endpoints (batch-stock, arrivals, sync)
 ├── routes/sap.js                    # SAP API routes
-├── scripts/migrate-from-sap.js      # Initial migration script
-└── scripts/map-locations-to-sap.js  # Location mapping helper
+└── scripts/migrate-from-sap-export.js  # Initial migration script (reads Excel)
 
 client/src/
 ├── pages/InventoryArrivals.jsx      # Arrivals sync page ("Sincronizar Entradas")
@@ -837,16 +877,17 @@ client/src/
 5. Update `locacionModel.js` with sapIntegration object
 6. Update `consignacionModel.js` with sapDocNum field
 
-### Initial Migration
-7. Map existing locations to SAP warehouses and bin locations (see Migration Steps)
-8. Create migration script to import products from SAP
-9. Import batch stock to create Lotes
+### Initial Migration (Manual Export)
+7. Map existing locations to SAP warehouses and bin locations (MongoDB updates)
+8. Export inventory from SAP UI (Warehouse 01 + Warehouse 10 with bins)
+9. Run `migrate-from-sap-export.js` script with Excel file
+10. Verify inventory totals match SAP
 
 ### Feature Development
-10. Build Arrival Sync page (`InventoryArrivals.jsx`)
-11. Build BatchSelector component for consignment modal
-12. Integrate SAP StockTransfer creation on consignment confirm
+11. Build Arrival Sync page (`InventoryArrivals.jsx`)
+12. Build BatchSelector component for consignment modal
+13. Integrate SAP StockTransfer creation on consignment confirm
 
 ### Validation
-13. Test full workflow: Arrival → Consignment → SAP Transfer
-14. Verify inventory matches SAP after each operation
+14. Test full workflow: Arrival → Consignment → SAP Transfer
+15. Verify inventory matches SAP after each operation
