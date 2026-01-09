@@ -130,4 +130,11 @@ export const sapApi = {
   createStockTransfer: (data) => api.post('/sap/stock-transfer', data),
 };
 
+// Goods Receipt API (App → SAP)
+export const goodsReceiptApi = {
+  getProducts: (search) => api.get('/goods-receipt/products', { params: { search } }),
+  getWarehouses: () => api.get('/goods-receipt/warehouses'),
+  create: (data) => api.post('/goods-receipt', data),
+};
+
 export default api;

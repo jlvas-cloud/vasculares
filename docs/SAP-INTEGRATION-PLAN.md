@@ -20,23 +20,37 @@ Integrate vasculares app with SAP B1 to create stock transfers directly from the
 │                           COMPLETE SYSTEM FLOW                               │
 ├─────────────────────────────────────────────────────────────────────────────┤
 │                                                                              │
-│   SUPPLIER                                                                   │
+│   SUPPLIER (Centralmed)                                                      │
 │      │                                                                       │
+│      │  Delivers products with packing list                                 │
 │      ▼                                                                       │
 │   ┌─────────────────────────────────────────┐                               │
-│   │  SAP B1: Goods Receipt (Entrada)        │                               │
-│   │  - Supplier Invoice created             │                               │
-│   │  - Batch/Lot numbers assigned           │                               │
-│   │  - Stock added to Warehouse 01          │                               │
+│   │  VASCULARES: "Recepcion" Page           │  ◄─── Phase 2a ✅ COMPLETE    │
+│   │  - Select supplier (Centralmed/P00031)  │                               │
+│   │  - Enter products, lots, expiry dates   │                               │
+│   │  - Click "Crear Recepcion"              │                               │
 │   └─────────────────────────────────────────┘                               │
 │      │                                                                       │
-│      │  "Sync Arrivals" button                                              │
+│      │  POST /api/goods-receipt                                             │
+│      │  Creates: Local lotes + SAP PurchaseDeliveryNotes                    │
+│      ▼                                                                       │
+│   ┌─────────────────────────────────────────┐                               │
+│   │  SAP B1: "Entrada de Mercancía"         │                               │
+│   │  - PurchaseDeliveryNotes created        │                               │
+│   │  - Linked to supplier (CardCode)        │                               │
+│   │  - Batch/Lot numbers with expiry        │                               │
+│   │  - Stock added to Warehouse 01          │                               │
+│   │  - Can create Supplier Invoice from it  │                               │
+│   └─────────────────────────────────────────┘                               │
+│      │                                                                       │
+│      │  DocNum returned to app                                              │
 │      ▼                                                                       │
 │   ┌─────────────────────────────────────────┐                               │
 │   │  VASCULARES: Warehouse Inventory        │                               │
 │   │  - Products with lot numbers            │                               │
 │   │  - Expiry dates                         │                               │
 │   │  - Available quantities                 │                               │
+│   │  - Linked to SAP DocNum                 │                               │
 │   └─────────────────────────────────────────┘                               │
 │      │                                                                       │
 │      │  "Crear Consignación"                                                │
@@ -980,71 +994,136 @@ client/src/
 
 ---
 
-## Phase 2: Goods Receipt (App → SAP)
+## Phase 2: Goods Receipt (App → SAP) ✅ PHASE 2a COMPLETE
 
 ### Overview
 Instead of syncing FROM SAP, allow users to enter goods receipts IN the app and push TO SAP. This eliminates double data entry.
 
 ### Flow
 ```
-Supplier delivers → Staff enters in App → Push to SAP (InventoryGenEntry)
-                    (manual or packing list)
+Supplier delivers → Staff enters in App → Push to SAP (PurchaseDeliveryNotes)
+                    (manual or packing list)    ↓
+                                          Entrada de Mercancía created
+                                                ↓
+                                          Can create Supplier Invoice from this
 ```
 
-### SAP API Tested ✅
-**Endpoint**: `POST /b1s/v1/InventoryGenEntries`
+### SAP Document Types
+
+| Document Type | SAP Entity | Use Case |
+|--------------|------------|----------|
+| ~~InventoryGenEntries~~ | Internal adjustment | ❌ Can't create invoices from this |
+| **PurchaseDeliveryNotes** | Goods Receipt PO | ✅ **USE THIS** - Creates "Entrada de Mercancía" that links to supplier for invoicing |
+
+### SAP API - PurchaseDeliveryNotes ✅ TESTED
+
+**Endpoint**: `POST /b1s/v1/PurchaseDeliveryNotes`
 
 ```javascript
 {
-  "DocDate": "2025-01-09",
+  "DocDate": "2024-07-01",
+  "CardCode": "P00031",           // Required: Supplier (e.g., Centralmed)
   "Comments": "Entrada desde Vasculares App",
   "DocumentLines": [{
-    "ItemCode": "364514",
-    "Quantity": 3,
+    "ItemCode": "002-01",
+    "Quantity": 1,
     "WarehouseCode": "01",
+    "TaxCode": "EXE",             // Required: Tax code
     "BatchNumbers": [{
-      "BatchNumber": "03243463",
-      "Quantity": 3,
-      "ExpiryDate": "2026-05-14"
+      "BatchNumber": "TEST-EM-001",
+      "Quantity": 1,
+      "ExpiryDate": "2028-06-30"
     }]
   }]
 }
 ```
 
-**Test Results** (2025-01-09):
+**Test Results** (2026-01-09):
+- ✅ Created DocEntry 4434, DocNum 4432
+- ✅ CardCode links to supplier (CentralMed, S.A.)
+- ✅ Creates proper "Goods Receipt PO" / "Entrada de Mercancía"
+- ✅ This document can be used to create supplier invoices (Facturas de Proveedor)
 - ✅ No Purchase Order required
 - ✅ Batch numbers created with expiry dates
-- ✅ Duplicate batch numbers allowed (SAP aggregates quantity)
-- ✅ AdmissionDate auto-set to document date
+- ⚠️ Test DB has outdated exchange rates (use 2024 dates for testing)
 
-### Implementation Phases
+### Implementation Status
 
-#### Phase 2a: Manual Entry
-- [ ] Create "Recibir Mercancía" page in app
-- [ ] Form: product selector, batch number, expiry, quantity
-- [ ] Save to local DB (Lotes, Inventario)
-- [ ] Push to SAP via InventoryGenEntries API
-- [ ] Store SAP DocNum reference
+#### Phase 2a: Manual Entry ✅ COMPLETE
 
-#### Phase 2b: Packing List Upload
+**Backend Files Created:**
+- `server/controllers/goodsReceipt.js` ✅
+  - `createGoodsReceipt` - Creates local lotes + pushes PurchaseDeliveryNotes to SAP
+  - `getProductsForReceipt` - Lists products with SAP codes
+  - `getWarehouses` - Lists warehouse locations
+- `server/routes/goodsReceipt.js` ✅
+- `server/app.js` - Added goodsReceipt routes ✅
+
+**Frontend Files Created:**
+- `client/src/pages/GoodsReceipt.jsx` ✅
+  - Warehouse selector
+  - Supplier selector (Centralmed with SAP code P00031)
+  - Multi-item form (product search, lot number, quantity, expiry)
+  - Submit creates local records + pushes to SAP
+  - Shows "Entrada de Mercancía" result with DocNum
+- `client/src/lib/api.js` - Added goodsReceiptApi ✅
+- `client/src/App.jsx` - Added /goods-receipt route ✅
+- `client/src/components/Layout.jsx` - Added "Recepcion" menu item ✅
+
+**API Endpoints:**
+```
+GET  /api/goods-receipt/warehouses     - List warehouse locations
+GET  /api/goods-receipt/products       - Search products with SAP codes
+POST /api/goods-receipt                - Create goods receipt (local + SAP)
+```
+
+**Request Body:**
+```javascript
+{
+  "locationId": "...",           // Warehouse ObjectId
+  "supplier": "Centralmed",      // Supplier name (for display)
+  "supplierCode": "P00031",      // SAP CardCode - REQUIRED for SAP
+  "notes": "...",
+  "pushToSap": true,
+  "items": [{
+    "productId": "...",
+    "lotNumber": "BATCH-001",
+    "quantity": 5,
+    "expiryDate": "2028-06-30"
+  }]
+}
+```
+
+**Response:**
+```javascript
+{
+  "success": true,
+  "lotes": [...],
+  "transactions": [...],
+  "sapResult": {
+    "success": true,
+    "sapDocEntry": 4434,
+    "sapDocNum": 4432,
+    "sapDocType": "PurchaseDeliveryNotes"  // Entrada de Mercancía
+  }
+}
+```
+
+**Key Requirements:**
+1. Supplier with SAP CardCode is **required** to create Entrada de Mercancía
+2. Products must have `sapItemCode` configured
+3. TaxCode defaults to 'EXE' (exempt) - configurable in code
+
+#### Phase 2b: Packing List Upload (Pending)
 - [ ] Upload PDF/image of packing list
 - [ ] Extract data (Centralmed/Biotronik format - always same)
 - [ ] Review/edit extracted data
 - [ ] Confirm → Save local + Push to SAP
 
-### Files to Create
-```
-server/
-├── controllers/goodsReceipt.js     # Goods receipt logic + SAP push
-└── routes/goodsReceipt.js          # API routes
+### Configured Suppliers
 
-client/src/
-├── pages/GoodsReceipt.jsx          # Manual entry page
-└── pages/PackingListUpload.jsx     # PDF upload + extraction (Phase 2b)
-```
+| Supplier | SAP CardCode | Notes |
+|----------|--------------|-------|
+| Centralmed | P00031 | Primary supplier for Orsiro Mission |
 
-### Data Model
-Existing models sufficient:
-- `Lote` - stores batch number, expiry, quantity
-- `Inventario` - aggregated stock per location
-- Add: `sapDocNum` field to track SAP document reference
+To add more suppliers, update the `suppliers` array in `GoodsReceipt.jsx`.

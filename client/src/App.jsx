@@ -15,6 +15,7 @@ import TransactionHistory from './pages/TransactionHistory';
 import Planning from './pages/Planning';
 import Consignaciones from './pages/Consignaciones';
 import SapArrivals from './pages/SapArrivals';
+import GoodsReceipt from './pages/GoodsReceipt';
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -60,6 +61,7 @@ function App() {
                         <Route path="/planning" element={<Planning />} />
                         <Route path="/consignaciones" element={<Consignaciones />} />
                         <Route path="/sap-arrivals" element={<SapArrivals />} />
+                        <Route path="/goods-receipt" element={<GoodsReceipt />} />
                       </Routes>
                     </Layout>
                   </PrivateRoute>
