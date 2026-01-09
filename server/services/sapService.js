@@ -4,6 +4,10 @@
  */
 const https = require('https');
 
+// Allow self-signed certificates for SAP server
+// In production, you should use proper certificates
+process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
+
 // SAP B1 Service Layer configuration
 const SAP_CONFIG = {
   serviceUrl: process.env.SAP_B1_SERVICE_URL || 'https://94.74.64.47:50000/b1s/v1',
@@ -16,11 +20,6 @@ const SAP_CONFIG = {
 let sessionId = null;
 let sessionExpiry = null;
 const SESSION_DURATION_MS = 25 * 60 * 1000; // 25 minutes (SAP default is 30)
-
-// Create HTTPS agent that allows self-signed certificates
-const httpsAgent = new https.Agent({
-  rejectUnauthorized: false,
-});
 
 /**
  * Make an HTTP request to SAP B1 Service Layer
@@ -39,7 +38,6 @@ async function sapRequest(method, endpoint, body = null, includeSession = true) 
   const options = {
     method,
     headers,
-    agent: httpsAgent,
   };
 
   if (body) {
