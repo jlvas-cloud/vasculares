@@ -977,3 +977,74 @@ client/src/
 
 ### Documentation
 - `docs/SAP-BATCH-TRACKING.md` - Technical reference for accessing batch/lot info from SAP
+
+---
+
+## Phase 2: Goods Receipt (App → SAP)
+
+### Overview
+Instead of syncing FROM SAP, allow users to enter goods receipts IN the app and push TO SAP. This eliminates double data entry.
+
+### Flow
+```
+Supplier delivers → Staff enters in App → Push to SAP (InventoryGenEntry)
+                    (manual or packing list)
+```
+
+### SAP API Tested ✅
+**Endpoint**: `POST /b1s/v1/InventoryGenEntries`
+
+```javascript
+{
+  "DocDate": "2025-01-09",
+  "Comments": "Entrada desde Vasculares App",
+  "DocumentLines": [{
+    "ItemCode": "364514",
+    "Quantity": 3,
+    "WarehouseCode": "01",
+    "BatchNumbers": [{
+      "BatchNumber": "03243463",
+      "Quantity": 3,
+      "ExpiryDate": "2026-05-14"
+    }]
+  }]
+}
+```
+
+**Test Results** (2025-01-09):
+- ✅ No Purchase Order required
+- ✅ Batch numbers created with expiry dates
+- ✅ Duplicate batch numbers allowed (SAP aggregates quantity)
+- ✅ AdmissionDate auto-set to document date
+
+### Implementation Phases
+
+#### Phase 2a: Manual Entry
+- [ ] Create "Recibir Mercancía" page in app
+- [ ] Form: product selector, batch number, expiry, quantity
+- [ ] Save to local DB (Lotes, Inventario)
+- [ ] Push to SAP via InventoryGenEntries API
+- [ ] Store SAP DocNum reference
+
+#### Phase 2b: Packing List Upload
+- [ ] Upload PDF/image of packing list
+- [ ] Extract data (Centralmed/Biotronik format - always same)
+- [ ] Review/edit extracted data
+- [ ] Confirm → Save local + Push to SAP
+
+### Files to Create
+```
+server/
+├── controllers/goodsReceipt.js     # Goods receipt logic + SAP push
+└── routes/goodsReceipt.js          # API routes
+
+client/src/
+├── pages/GoodsReceipt.jsx          # Manual entry page
+└── pages/PackingListUpload.jsx     # PDF upload + extraction (Phase 2b)
+```
+
+### Data Model
+Existing models sufficient:
+- `Lote` - stores batch number, expiry, quantity
+- `Inventario` - aggregated stock per location
+- Add: `sapDocNum` field to track SAP document reference
