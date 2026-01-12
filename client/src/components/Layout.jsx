@@ -9,16 +9,24 @@ export default function Layout({ children }) {
 
   const navigation = [
     { name: 'Dashboard', href: '/', icon: Home },
+
+    { type: 'header', name: 'Recepción' },
+    { name: 'Nueva Recepción', href: '/goods-receipt', icon: PackagePlus },
+    { name: 'Historial', href: '/goods-receipt-history', icon: FileBox },
+
+    { type: 'header', name: 'Consignación' },
+    { name: 'Planificación', href: '/planning', icon: BarChart3 },
+    { name: 'Envíos', href: '/consignaciones', icon: Truck },
+
+    { type: 'header', name: 'Consumo' },
+    { name: 'Registrar', href: '/consumption', icon: Activity },
+    { name: 'Historial', href: '/consumption/history', icon: ClipboardList },
+
+    { type: 'divider' },
+    { name: 'Inventario', href: '/inventory', icon: Boxes },
     { name: 'Productos', href: '/products', icon: Package },
     { name: 'Locaciones', href: '/locations', icon: MapPin },
-    { name: 'Inventario', href: '/inventory', icon: Boxes },
-    { name: 'Planificación', href: '/planning', icon: BarChart3 },
-    { name: 'Consignaciones', href: '/consignaciones', icon: Truck },
-    { name: 'Recepcion', href: '/goods-receipt', icon: PackagePlus },
-    { name: 'Hist. Entradas', href: '/goods-receipt-history', icon: FileBox },
-    { name: 'Consumo', href: '/consumption', icon: Activity },
-    { name: 'Hist. Consumos', href: '/consumption/history', icon: ClipboardList },
-    { name: 'Historial', href: '/transactions', icon: History },
+    { name: 'Transacciones', href: '/transactions', icon: History },
   ];
 
   return (
@@ -31,7 +39,21 @@ export default function Layout({ children }) {
 
         <div className="flex-1 overflow-y-auto px-3 py-4">
           <nav className="space-y-1">
-            {navigation.map((item) => {
+            {navigation.map((item, index) => {
+              if (item.type === 'header') {
+                return (
+                  <div key={item.name} className="pt-4 pb-1 px-3">
+                    <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                      {item.name}
+                    </span>
+                  </div>
+                );
+              }
+
+              if (item.type === 'divider') {
+                return <div key={`divider-${index}`} className="my-3 border-t" />;
+              }
+
               const Icon = item.icon;
               const isActive = location.pathname === item.href;
 
