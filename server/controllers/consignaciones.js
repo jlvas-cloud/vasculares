@@ -718,3 +718,83 @@ exports.confirm = async (req, res, next) => {
     next(error);
   }
 };
+
+/**
+ * POST /api/consignaciones/:id/retry-sap
+ * Retry SAP stock transfer for a failed consignment
+ */
+exports.retrySap = async (req, res, next) => {
+  try {
+    const Consignaciones = await getConsignacionesModel(req.companyId);
+    const Locaciones = await getLocacionesModel(req.companyId);
+    const Productos = await getProductosModel(req.companyId);
+
+    const consignacion = await Consignaciones.findById(req.params.id);
+
+    if (!consignacion) {
+      return res.status(404).json({ error: 'Consignación no encontrada' });
+    }
+
+    if (consignacion.sapTransferStatus === 'CREATED') {
+      return res.status(400).json({ error: 'Esta consignación ya está sincronizada con SAP' });
+    }
+
+    // Get locations for SAP warehouse codes
+    const fromLocation = await Locaciones.findById(consignacion.fromLocationId);
+    const toLocation = await Locaciones.findById(consignacion.toLocationId);
+
+    if (!fromLocation?.sapIntegration?.warehouseCode || !toLocation?.sapIntegration?.warehouseCode) {
+      return res.status(400).json({ error: 'Configuración SAP incompleta para las locaciones' });
+    }
+
+    // Build SAP transfer items
+    const sapTransferItems = [];
+    for (const item of consignacion.items) {
+      const product = await Productos.findById(item.productId);
+      if (product?.sapItemCode) {
+        sapTransferItems.push({
+          itemCode: product.sapItemCode,
+          quantity: item.quantitySent,
+          batchNumber: item.lotNumber,
+        });
+      }
+    }
+
+    if (sapTransferItems.length === 0) {
+      return res.status(400).json({ error: 'No hay productos con código SAP para transferir' });
+    }
+
+    // Retry SAP Stock Transfer
+    try {
+      const sapResult = await sapService.createStockTransfer({
+        fromWarehouse: fromLocation.sapIntegration.warehouseCode,
+        toWarehouse: toLocation.sapIntegration.warehouseCode,
+        toBinAbsEntry: toLocation.sapIntegration.binAbsEntry,
+        items: sapTransferItems,
+        comments: `Consignación Vasculares - ${toLocation.name} (Retry)`,
+      });
+
+      consignacion.sapDocNum = sapResult.DocNum;
+      consignacion.sapTransferStatus = 'CREATED';
+      consignacion.sapError = null;
+      await consignacion.save();
+
+      res.json({
+        success: true,
+        sapDocNum: sapResult.DocNum,
+        sapDocEntry: sapResult.DocEntry,
+      });
+    } catch (sapError) {
+      consignacion.sapError = sapError.message;
+      await consignacion.save();
+
+      res.status(500).json({
+        success: false,
+        error: sapError.message,
+      });
+    }
+  } catch (error) {
+    console.error('Error retrying SAP sync:', error);
+    next(error);
+  }
+};

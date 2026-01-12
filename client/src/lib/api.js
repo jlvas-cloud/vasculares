@@ -113,6 +113,7 @@ export const consignacionesApi = {
   getOne: (id) => api.get(`/consignaciones/${id}`),
   create: (data) => api.post('/consignaciones', data),
   confirm: (id, data) => api.put(`/consignaciones/${id}/confirm`, data),
+  retrySap: (id) => api.post(`/consignaciones/${id}/retry-sap`),
 };
 
 // SAP Integration API (for stock transfers, batch queries, etc.)

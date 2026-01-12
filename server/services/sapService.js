@@ -292,7 +292,7 @@ async function getCustomers(search = '', limit = 20) {
  * @param {string} params.comments Comments (patient, doctor, procedure info)
  * @returns {Object} SAP document info { DocEntry, DocNum }
  */
-async function createDeliveryNote({ cardCode, warehouseCode, items, comments }) {
+async function createDeliveryNote({ cardCode, cardName, warehouseCode, binAbsEntry, items, comments, doctorName }) {
   await ensureSession();
 
   const documentLines = items.map((item, index) => {
@@ -317,12 +317,28 @@ async function createDeliveryNote({ cardCode, warehouseCode, items, comments }) 
       }];
     }
 
+    // Add bin allocation if warehouse uses bins
+    if (binAbsEntry) {
+      line.DocumentLinesBinAllocations = [{
+        BinAbsEntry: binAbsEntry,
+        Quantity: item.quantity,
+        AllowNegativeQuantity: 'tNO',
+        SerialAndBatchNumbersBaseLine: 0,
+      }];
+    }
+
     return line;
   });
 
   const deliveryPayload = {
     CardCode: cardCode,
     Comments: comments || 'Consumo registrado desde Vasculares',
+    // Required UDFs for clinic identification
+    U_CTS_CLIHOS: cardCode,
+    U_CTS_CLIHOS_NAME: cardName || cardCode,
+    // Specialist/doctor fields
+    U_CTS_INST: 'n/a',
+    U_CTS_INST_NAME: doctorName || null,
     DocumentLines: documentLines,
   };
 

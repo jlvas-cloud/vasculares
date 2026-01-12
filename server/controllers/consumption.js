@@ -302,9 +302,12 @@ exports.create = async (req, res, next) => {
     try {
       const deliveryResult = await sapService.createDeliveryNote({
         cardCode: centro.sapIntegration.cardCode,
-        warehouseCode: '10', // Consignacion warehouse
+        cardName: centro.sapIntegration.cardName || centro.name,
+        warehouseCode: centro.sapIntegration.warehouseCode || '10',
+        binAbsEntry: centro.sapIntegration.binAbsEntry || null,
         items: sapItems,
         comments: sapComments,
+        doctorName: doctorName || null,
       });
 
       sapResult = {
@@ -495,9 +498,12 @@ exports.retrySap = async (req, res, next) => {
     try {
       const deliveryResult = await sapService.createDeliveryNote({
         cardCode: centro.sapIntegration.cardCode,
-        warehouseCode: '10',
+        cardName: centro.sapIntegration.cardName || centro.name,
+        warehouseCode: centro.sapIntegration.warehouseCode || '10',
+        binAbsEntry: centro.sapIntegration.binAbsEntry || null,
         items: sapItems,
         comments: sapComments,
+        doctorName: consumo.doctorName || null,
       });
 
       consumo.sapSync = {

@@ -9,7 +9,7 @@ import { Input } from '../components/ui/input';
 import { Button } from '../components/ui/button';
 import { Badge } from '../components/ui/badge';
 import { useToast } from '../components/ui/toast';
-import { Package, Truck, AlertTriangle, CheckCircle2, Clock } from 'lucide-react';
+import { Package, Truck, AlertTriangle, CheckCircle2, Clock, XCircle, RefreshCw } from 'lucide-react';
 
 export default function Consignaciones() {
   const [statusFilter, setStatusFilter] = useState('all');
@@ -49,6 +49,20 @@ export default function Consignaciones() {
     },
   });
 
+  const retrySapMutation = useMutation({
+    mutationFn: (id) => consignacionesApi.retrySap(id),
+    onSuccess: (response) => {
+      queryClient.invalidateQueries(['consignaciones']);
+      toast.success(`SAP sync exitoso - DocNum: ${response.data.sapDocNum}`);
+      setConfirmOpen(false);
+    },
+    onError: (error) => {
+      console.error('Retry SAP error:', error);
+      const message = error?.response?.data?.error || error?.message || 'Error al reintentar SAP';
+      toast.error(message);
+    },
+  });
+
   const handleViewConsignment = (consignment) => {
     setSelectedConsignment(consignment);
     // Initialize confirm items with sent quantities
@@ -79,13 +93,31 @@ export default function Consignaciones() {
   };
 
   const getStatusBadge = (consignment) => {
-    const { status, isOld } = consignment;
+    const { status, isOld, sapTransferStatus } = consignment;
 
     if (status === 'RECIBIDO') {
+      // Show SAP sync status for received consignments
+      if (sapTransferStatus === 'FAILED') {
+        return (
+          <Badge className="bg-red-100 text-red-800 border-0">
+            <XCircle className="h-3 w-3 mr-1" />
+            SAP Error
+          </Badge>
+        );
+      }
+      if (sapTransferStatus === 'CREATED') {
+        return (
+          <Badge className="bg-green-100 text-green-800 border-0">
+            <CheckCircle2 className="h-3 w-3 mr-1" />
+            Recibido
+          </Badge>
+        );
+      }
+      // No SAP status yet
       return (
-        <Badge className="bg-green-100 text-green-800 border-0">
-          <CheckCircle2 className="h-3 w-3 mr-1" />
-          Recibido
+        <Badge className="bg-yellow-100 text-yellow-800 border-0">
+          <AlertTriangle className="h-3 w-3 mr-1" />
+          Pendiente SAP
         </Badge>
       );
     }
@@ -292,6 +324,41 @@ export default function Consignaciones() {
                     Ajusta las cantidades recibidas si hay diferencias. Las cantidades no recibidas se devolverán
                     automáticamente al almacén.
                   </p>
+                </div>
+              )}
+
+              {/* SAP Sync Status */}
+              {selectedConsignment.status === 'RECIBIDO' && selectedConsignment.sapTransferStatus === 'FAILED' && (
+                <div className="bg-red-50 border border-red-200 p-3 rounded-md text-sm">
+                  <div className="flex items-center gap-2 mb-2">
+                    <XCircle className="h-4 w-4 text-red-600" />
+                    <p className="font-medium text-red-900">Error de sincronización SAP</p>
+                  </div>
+                  <p className="text-red-700 mb-3 font-mono text-xs bg-red-100 p-2 rounded">
+                    {selectedConsignment.sapError || 'Error desconocido'}
+                  </p>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => retrySapMutation.mutate(selectedConsignment._id)}
+                    disabled={retrySapMutation.isPending}
+                    className="border-red-300 text-red-700 hover:bg-red-100"
+                  >
+                    <RefreshCw className={`h-4 w-4 mr-2 ${retrySapMutation.isPending ? 'animate-spin' : ''}`} />
+                    {retrySapMutation.isPending ? 'Reintentando...' : 'Reintentar SAP'}
+                  </Button>
+                </div>
+              )}
+
+              {selectedConsignment.status === 'RECIBIDO' && selectedConsignment.sapTransferStatus === 'CREATED' && (
+                <div className="bg-green-50 border border-green-200 p-3 rounded-md text-sm">
+                  <div className="flex items-center gap-2">
+                    <CheckCircle2 className="h-4 w-4 text-green-600" />
+                    <p className="font-medium text-green-900">Sincronizado con SAP</p>
+                    {selectedConsignment.sapDocNum && (
+                      <Badge variant="outline" className="ml-2">DocNum: {selectedConsignment.sapDocNum}</Badge>
+                    )}
+                  </div>
                 </div>
               )}
 

@@ -35,5 +35,6 @@ router.get('/', consignacionesController.list);
 router.get('/:id', consignacionesController.getOne);
 router.post('/', validateCreate, consignacionesController.create);
 router.put('/:id/confirm', validateConfirm, consignacionesController.confirm);
+router.post('/:id/retry-sap', consignacionesController.retrySap);
 
 module.exports = router;
