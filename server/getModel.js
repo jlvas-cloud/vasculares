@@ -11,6 +11,7 @@ const loteSchema = require('./models/loteModel');
 const inventarioObjetivosSchema = require('./models/inventarioObjetivosModel');
 const consignacionSchema = require('./models/consignacionModel');
 const goodsReceiptSchema = require('./models/goodsReceiptModel');
+const consumoSchema = require('./models/consumoModel');
 const usersSchema = require('./models/usersModel');
 const companySchema = require('./models/companyModel');
 
@@ -137,6 +138,16 @@ exports.getConsignacionesModel = async (companyId) => {
 exports.getGoodsReceiptsModel = async (companyId) => {
   const db = await getVascularesDb(companyId, 'goodsreceipts', goodsReceiptSchema);
   return db.model('goodsreceipts');
+};
+
+/**
+ * Get Consumos model for a specific company
+ * Stored in: {companyId}_vasculares database
+ * Tracks consumption events at Centros with SAP DeliveryNote integration
+ */
+exports.getConsumosModel = async (companyId) => {
+  const db = await getVascularesDb(companyId, 'consumos', consumoSchema);
+  return db.model('consumos');
 };
 
 // ============================================

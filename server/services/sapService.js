@@ -244,6 +244,107 @@ async function verifyConnection() {
   }
 }
 
+/**
+ * Search for customers (Business Partners) in SAP B1
+ * Used to map Centros to SAP customers for DeliveryNotes
+ *
+ * @param {string} search Search term (searches CardCode and CardName)
+ * @param {number} limit Max results (default 20)
+ * @returns {Array} Matching customers
+ */
+async function getCustomers(search = '', limit = 20) {
+  await ensureSession();
+
+  let filter = "CardType eq 'cCustomer'";
+  if (search) {
+    const searchTerm = search.replace(/'/g, "''"); // Escape single quotes
+    filter += ` and (contains(CardCode,'${searchTerm}') or contains(CardName,'${searchTerm}'))`;
+  }
+
+  const response = await sapRequest(
+    'GET',
+    `/BusinessPartners?$filter=${encodeURIComponent(filter)}&$select=CardCode,CardName,Phone1,EmailAddress,Address&$top=${limit}&$orderby=CardName`
+  );
+
+  if (!response.ok) {
+    const errorData = await response.json().catch(() => ({}));
+    const errorMessage = errorData.error?.message?.value || response.statusText;
+    throw new Error(`Failed to get customers: ${errorMessage}`);
+  }
+
+  const data = await response.json();
+  return data.value || [];
+}
+
+/**
+ * Create a Delivery Note (Entrega) in SAP B1
+ * Used for recording consumption at Centros
+ *
+ * @param {Object} params Delivery parameters
+ * @param {string} params.cardCode Customer code (Centro's SAP customer)
+ * @param {string} params.warehouseCode Warehouse code (usually "10" for consignment)
+ * @param {Array} params.items Items to deliver
+ * @param {string} params.items[].itemCode SAP item code
+ * @param {number} params.items[].quantity Quantity
+ * @param {string} params.items[].batchNumber Batch/lot number
+ * @param {number} params.items[].price Unit price (optional)
+ * @param {string} params.items[].currency Currency code (optional, default USD)
+ * @param {string} params.comments Comments (patient, doctor, procedure info)
+ * @returns {Object} SAP document info { DocEntry, DocNum }
+ */
+async function createDeliveryNote({ cardCode, warehouseCode, items, comments }) {
+  await ensureSession();
+
+  const documentLines = items.map((item, index) => {
+    const line = {
+      LineNum: index,
+      ItemCode: item.itemCode,
+      Quantity: item.quantity,
+      WarehouseCode: warehouseCode,
+    };
+
+    // Add price if provided
+    if (item.price) {
+      line.Price = item.price;
+      line.Currency = item.currency || 'USD';
+    }
+
+    // Add batch number if provided
+    if (item.batchNumber) {
+      line.BatchNumbers = [{
+        BatchNumber: item.batchNumber,
+        Quantity: item.quantity,
+      }];
+    }
+
+    return line;
+  });
+
+  const deliveryPayload = {
+    CardCode: cardCode,
+    Comments: comments || 'Consumo registrado desde Vasculares',
+    DocumentLines: documentLines,
+  };
+
+  console.log('Creating SAP Delivery Note:', JSON.stringify(deliveryPayload, null, 2));
+
+  const response = await sapRequest('POST', '/DeliveryNotes', deliveryPayload);
+
+  if (!response.ok) {
+    const errorData = await response.json().catch(() => ({}));
+    const errorMessage = errorData.error?.message?.value || response.statusText;
+    throw new Error(`SAP Delivery Note failed: ${errorMessage}`);
+  }
+
+  const result = await response.json();
+  console.log('SAP Delivery Note created:', result.DocNum);
+
+  return {
+    DocEntry: result.DocEntry,
+    DocNum: result.DocNum,
+  };
+}
+
 module.exports = {
   login,
   logout,
@@ -252,5 +353,7 @@ module.exports = {
   getItemInventory,
   getItemBatches,
   verifyConnection,
+  getCustomers,
+  createDeliveryNote,
   SAP_CONFIG,
 };

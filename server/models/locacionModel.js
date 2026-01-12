@@ -78,6 +78,15 @@ const locacionSchema = new Schema({
       type: String,
       description: 'SAP B1 Bin Location Code (e.g., "10-CECANOR")',
     },
+    // Customer info for DeliveryNotes (Entregas) - used for consumption
+    cardCode: {
+      type: String,
+      description: 'SAP B1 Customer CardCode (e.g., "C00013" for CECANOR)',
+    },
+    cardName: {
+      type: String,
+      description: 'SAP B1 Customer name',
+    },
   },
 
   active: {

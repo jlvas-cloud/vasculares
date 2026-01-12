@@ -296,3 +296,19 @@ exports.getSuppliers = async (req, res, next) => {
     next(error);
   }
 };
+
+/**
+ * GET /api/sap/customers
+ * Get list of customers (business partners) from SAP
+ * Used for mapping Centros to SAP customers for DeliveryNotes
+ */
+exports.getCustomers = async (req, res, next) => {
+  try {
+    const { search } = req.query;
+    const customers = await sapService.getCustomers(search);
+    res.json(customers);
+  } catch (error) {
+    console.error('Error fetching SAP customers:', error);
+    next(error);
+  }
+};

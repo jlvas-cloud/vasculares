@@ -1,13 +1,13 @@
 import { useState, useRef } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { locacionesApi } from '../lib/api';
+import { locacionesApi, sapApi } from '../lib/api';
 import { Button } from '../components/ui/button';
 import { Input } from '../components/ui/input';
 import { Label } from '../components/ui/label';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../components/ui/card';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from '../components/ui/dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select';
-import { Plus, MapPin, Building, Edit, Trash2 } from 'lucide-react';
+import { Plus, MapPin, Building, Edit, Trash2, Search, User } from 'lucide-react';
 import { useToast } from '../components/ui/toast';
 
 export default function Locations() {
@@ -17,6 +17,10 @@ export default function Locations() {
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [locationToDelete, setLocationToDelete] = useState(null);
   const [deleteConfirmText, setDeleteConfirmText] = useState('');
+  // SAP Customer search state
+  const [customerSearch, setCustomerSearch] = useState('');
+  const [selectedCustomer, setSelectedCustomer] = useState(null);
+  const [showCustomerResults, setShowCustomerResults] = useState(false);
   const formRef = useRef(null);
   const queryClient = useQueryClient();
   const toast = useToast();
@@ -31,6 +35,13 @@ export default function Locations() {
   const { data: tipos } = useQuery({
     queryKey: ['tipos'],
     queryFn: () => locacionesApi.getTipos().then((res) => res.data),
+  });
+
+  // SAP Customer search query
+  const { data: customers, isLoading: customersLoading } = useQuery({
+    queryKey: ['sap-customers', customerSearch],
+    queryFn: () => sapApi.getCustomers({ search: customerSearch }).then((res) => res.data),
+    enabled: customerSearch.length >= 2 && showCustomerResults,
   });
 
   const createMutation = useMutation({
@@ -73,6 +84,9 @@ export default function Locations() {
     setOpen(false);
     setEditingLocation(null);
     setSelectedType('');
+    setCustomerSearch('');
+    setSelectedCustomer(null);
+    setShowCustomerResults(false);
     formRef.current?.reset();
   };
 
@@ -104,7 +118,22 @@ export default function Locations() {
   const handleEdit = (location) => {
     setEditingLocation(location);
     setSelectedType(location.type);
+    // Set existing SAP customer if available
+    if (location.sapIntegration?.cardCode) {
+      setSelectedCustomer({
+        CardCode: location.sapIntegration.cardCode,
+        CardName: location.sapIntegration.cardName,
+      });
+    } else {
+      setSelectedCustomer(null);
+    }
     setOpen(true);
+  };
+
+  const handleSelectCustomer = (customer) => {
+    setSelectedCustomer(customer);
+    setShowCustomerResults(false);
+    setCustomerSearch(customer.CardName);
   };
 
   const handleSubmit = (e) => {
@@ -130,6 +159,9 @@ export default function Locations() {
         warehouseCode: formData.get('sapWarehouseCode') || null,
         binAbsEntry: binAbsEntry ? parseInt(binAbsEntry, 10) : null,
         binCode: formData.get('sapBinCode') || null,
+        // SAP Customer for DeliveryNotes (Centros only)
+        cardCode: selectedCustomer?.CardCode || null,
+        cardName: selectedCustomer?.CardName || null,
       },
     };
 
@@ -250,6 +282,74 @@ export default function Locations() {
                       />
                     </div>
                   </div>
+                  {/* SAP Customer (for Centros - used in DeliveryNotes/Entregas) */}
+                  {selectedType === 'CENTRO' && (
+                    <div className="mt-2">
+                      <Label className="text-xs">Cliente SAP (para Entregas)</Label>
+                      <div className="relative">
+                        <div className="flex gap-2">
+                          <div className="relative flex-1">
+                            <Input
+                              placeholder="Buscar cliente en SAP..."
+                              value={customerSearch || selectedCustomer?.CardName || ''}
+                              onChange={(e) => {
+                                setCustomerSearch(e.target.value);
+                                setShowCustomerResults(true);
+                                if (!e.target.value) {
+                                  setSelectedCustomer(null);
+                                }
+                              }}
+                              onFocus={() => setShowCustomerResults(true)}
+                            />
+                            <Search className="absolute right-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                          </div>
+                        </div>
+                        {/* Customer search results dropdown */}
+                        {showCustomerResults && customerSearch.length >= 2 && (
+                          <div className="absolute z-50 w-full mt-1 bg-background border rounded-md shadow-lg max-h-48 overflow-auto">
+                            {customersLoading ? (
+                              <div className="p-2 text-sm text-muted-foreground">Buscando...</div>
+                            ) : customers?.length > 0 ? (
+                              customers.map((customer) => (
+                                <button
+                                  key={customer.CardCode}
+                                  type="button"
+                                  className="w-full text-left px-3 py-2 hover:bg-accent flex items-center gap-2"
+                                  onClick={() => handleSelectCustomer(customer)}
+                                >
+                                  <User className="h-4 w-4 text-muted-foreground" />
+                                  <div>
+                                    <div className="font-medium">{customer.CardName}</div>
+                                    <div className="text-xs text-muted-foreground">{customer.CardCode}</div>
+                                  </div>
+                                </button>
+                              ))
+                            ) : (
+                              <div className="p-2 text-sm text-muted-foreground">No se encontraron clientes</div>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                      {selectedCustomer && (
+                        <div className="mt-1 text-xs text-muted-foreground flex items-center gap-1">
+                          <User className="h-3 w-3" />
+                          <span className="font-mono">{selectedCustomer.CardCode}</span>
+                          <span>-</span>
+                          <span>{selectedCustomer.CardName}</span>
+                          <button
+                            type="button"
+                            className="ml-2 text-destructive hover:underline"
+                            onClick={() => {
+                              setSelectedCustomer(null);
+                              setCustomerSearch('');
+                            }}
+                          >
+                            Quitar
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  )}
                 </div>
               </div>
               <DialogFooter>
@@ -322,7 +422,7 @@ export default function Locations() {
                 )}
                 {location.sapIntegration?.binCode && (
                   <div className="flex justify-between">
-                    <span className="text-muted-foreground">SAP:</span>
+                    <span className="text-muted-foreground">SAP Bin:</span>
                     <span className="font-medium font-mono text-xs">
                       {location.sapIntegration.binCode}
                     </span>
@@ -333,6 +433,14 @@ export default function Locations() {
                     <span className="text-muted-foreground">SAP Almacén:</span>
                     <span className="font-medium font-mono text-xs">
                       {location.sapIntegration.warehouseCode}
+                    </span>
+                  </div>
+                )}
+                {location.sapIntegration?.cardCode && (
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">SAP Cliente:</span>
+                    <span className="font-medium font-mono text-xs">
+                      {location.sapIntegration.cardCode}
                     </span>
                   </div>
                 )}

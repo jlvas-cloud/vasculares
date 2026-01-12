@@ -18,6 +18,7 @@ router.get('/warehouses', sapController.getWarehouses);
 router.get('/bin-locations', sapController.getBinLocations);
 router.get('/items', sapController.getItems);
 router.get('/suppliers', sapController.getSuppliers);
+router.get('/customers', sapController.getCustomers);
 
 // Inventory and batch data
 router.get('/batch-stock', sapController.getBatchStock);

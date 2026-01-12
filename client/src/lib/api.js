@@ -122,6 +122,7 @@ export const sapApi = {
   getBinLocations: (warehouse) => api.get('/sap/bin-locations', { params: { warehouse } }),
   getItems: (params) => api.get('/sap/items', { params }),
   getSuppliers: (params) => api.get('/sap/suppliers', { params }),
+  getCustomers: (params) => api.get('/sap/customers', { params }),
   getBatchStock: (itemCode, warehouseCode) => api.get('/sap/batch-stock', { params: { itemCode, warehouseCode } }),
   getInventory: (locationId) => api.get('/sap/inventory', { params: { locationId } }),
   createStockTransfer: (data) => api.post('/sap/stock-transfer', data),
@@ -143,6 +144,33 @@ export const goodsReceiptApi = {
       formData.append('files', file);
     });
     return api.post('/goods-receipt/extract', formData, {
+      headers: { 'Content-Type': 'multipart/form-data' }
+    });
+  },
+};
+
+// Consumption API (Centro consumptions → SAP DeliveryNotes)
+export const consumptionApi = {
+  // Get available inventory at a Centro
+  getInventory: (centroId) => api.get(`/consumption/inventory/${centroId}`),
+  // Create consumption record
+  create: (data) => api.post('/consumption', data),
+  // Get consumption history
+  getHistory: (params) => api.get('/consumption/history', { params }),
+  // Get single consumption
+  getOne: (id) => api.get(`/consumption/${id}`),
+  // Retry failed SAP sync
+  retrySap: (id) => api.post(`/consumption/${id}/retry-sap`),
+  // Extract from uploaded documents
+  extract: (files, centroId) => {
+    const formData = new FormData();
+    files.forEach((file) => {
+      formData.append('files', file);
+    });
+    if (centroId) {
+      formData.append('centroId', centroId);
+    }
+    return api.post('/consumption/extract', formData, {
       headers: { 'Content-Type': 'multipart/form-data' }
     });
   },

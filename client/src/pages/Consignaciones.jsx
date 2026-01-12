@@ -17,7 +17,7 @@ export default function Consignaciones() {
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [confirmItems, setConfirmItems] = useState([]);
   const queryClient = useQueryClient();
-  const { toast } = useToast();
+  const toast = useToast();
 
   const { data: locations } = useQuery({
     queryKey: ['locaciones'],
