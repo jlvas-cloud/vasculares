@@ -6,7 +6,7 @@
 ## Status Legend
 - [ ] Not started
 - [x] Completed
-- [~] In progress
+- [~] Won't fix (documented reason)
 
 ---
 
@@ -106,10 +106,11 @@
 
 ## LOW PRIORITY ISSUES
 
-### 13. [ ] TLS Certificate Validation Globally Disabled
+### 13. [~] TLS Certificate Validation Globally Disabled
 **Location:** `services/sapService.js:9`
 **Risk:** All HTTPS connections in the app are vulnerable to MITM attacks.
 **Solution:** Use https.Agent with proper CA only for SAP requests.
+**Status:** Won't fix - SAP is on internal network, risk is low. Requires CA cert from SAP team.
 
 ### 14. [x] SAP Credentials Exported
 **Location:** `services/sapService.js:374`
@@ -129,10 +130,11 @@
 **Solution:** Only log in debug mode, redact sensitive fields.
 **Fixed:** 2026-01-12 - Payload logging now conditional on DEBUG_SAP=true env var.
 
-### 17. [ ] No Connection Pooling for SAP
+### 17. [~] No Connection Pooling for SAP
 **Location:** `services/sapService.js`
 **Risk:** Each request creates new TCP connection.
-**Solution:** Create module-level https.Agent with keepAlive.
+**Solution:** Create undici Agent with keepAlive for fetch().
+**Status:** Won't fix - Low volume app, connection pooling overhead not justified.
 
 ### 18. [x] Session Duration Hardcoded
 **Location:** `services/sapService.js:22`
@@ -163,10 +165,12 @@ Log errors to monitoring service for visibility.
 
 ## Completion Tracking
 
-| Priority | Total | Done | Remaining |
-|----------|-------|------|-----------|
-| Critical | 3 | 3 | 0 |
-| High | 3 | 3 | 0 |
-| Medium | 6 | 6 | 0 |
-| Low | 6 | 4 | 2 |
-| **Total** | **18** | **16** | **2** |
+| Priority | Total | Done | Skipped | Remaining |
+|----------|-------|------|---------|-----------|
+| Critical | 3 | 3 | 0 | 0 |
+| High | 3 | 3 | 0 | 0 |
+| Medium | 6 | 6 | 0 | 0 |
+| Low | 6 | 4 | 2 | 0 |
+| **Total** | **18** | **16** | **2** | **0** |
+
+**Legend:** [x] Fixed, [~] Won't fix, [ ] Pending
