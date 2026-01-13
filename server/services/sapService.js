@@ -1,11 +1,16 @@
 /**
  * SAP Business One Service Layer Integration
  * Handles authentication and stock transfer operations
+ *
+ * Security features:
+ * - Login mutex prevents concurrent authentication race conditions
+ * - OData filter sanitization prevents injection attacks
+ * - Request timeouts prevent hung connections
  */
 const https = require('https');
 
 // Allow self-signed certificates for SAP server
-// In production, you should use proper certificates
+// TODO: In production, use proper certificates with custom https.Agent
 process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
 
 // SAP B1 Service Layer configuration
@@ -21,8 +26,40 @@ let sessionId = null;
 let sessionExpiry = null;
 const SESSION_DURATION_MS = 25 * 60 * 1000; // 25 minutes (SAP default is 30)
 
+// Login mutex - prevents concurrent login race conditions
+let loginPromise = null;
+
+// Request timeout in milliseconds
+const REQUEST_TIMEOUT_MS = 30000; // 30 seconds
+
 /**
- * Make an HTTP request to SAP B1 Service Layer
+ * Sanitize string for use in OData filter expressions
+ * Prevents OData injection attacks
+ *
+ * @param {string} value - Value to sanitize
+ * @param {string} fieldName - Field name for error messages
+ * @returns {string} Sanitized value
+ * @throws {Error} If value contains invalid characters
+ */
+function sanitizeODataValue(value, fieldName = 'value') {
+  if (typeof value !== 'string') {
+    throw new Error(`${fieldName} must be a string`);
+  }
+
+  // Allow alphanumeric, dots, hyphens, underscores, spaces
+  // This covers most SAP item codes, warehouse codes, batch numbers
+  const sanitized = value.trim();
+
+  if (!/^[a-zA-Z0-9.\-_ ]+$/.test(sanitized)) {
+    throw new Error(`${fieldName} contains invalid characters: ${value}`);
+  }
+
+  // Escape single quotes for OData
+  return sanitized.replace(/'/g, "''");
+}
+
+/**
+ * Make an HTTP request to SAP B1 Service Layer with timeout
  */
 async function sapRequest(method, endpoint, body = null, includeSession = true) {
   const url = `${SAP_CONFIG.serviceUrl}${endpoint}`;
@@ -44,42 +81,92 @@ async function sapRequest(method, endpoint, body = null, includeSession = true) 
     options.body = JSON.stringify(body);
   }
 
-  const response = await fetch(url, options);
+  // Add timeout using AbortController
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+  options.signal = controller.signal;
 
-  // Handle session expiry
-  if (response.status === 401 && includeSession) {
-    console.log('SAP session expired, re-authenticating...');
-    await login();
-    headers['Cookie'] = `B1SESSION=${sessionId}`;
-    return fetch(url, { ...options, headers });
+  try {
+    const response = await fetch(url, options);
+
+    // Handle session expiry
+    if (response.status === 401 && includeSession) {
+      console.log('SAP session expired, re-authenticating...');
+      await login();
+      headers['Cookie'] = `B1SESSION=${sessionId}`;
+
+      // Create new abort controller for retry
+      const retryController = new AbortController();
+      const retryTimeoutId = setTimeout(() => retryController.abort(), REQUEST_TIMEOUT_MS);
+
+      try {
+        return await fetch(url, { ...options, headers, signal: retryController.signal });
+      } finally {
+        clearTimeout(retryTimeoutId);
+      }
+    }
+
+    return response;
+  } catch (error) {
+    if (error.name === 'AbortError') {
+      throw new Error(`SAP request timeout after ${REQUEST_TIMEOUT_MS / 1000}s: ${method} ${endpoint}`);
+    }
+    throw error;
+  } finally {
+    clearTimeout(timeoutId);
   }
-
-  return response;
 }
 
 /**
  * Login to SAP B1 Service Layer
+ * Uses mutex to prevent concurrent login race conditions
  */
 async function login() {
-  console.log('Logging in to SAP B1 Service Layer...');
-
-  const response = await sapRequest('POST', '/Login', {
-    CompanyDB: SAP_CONFIG.companyDB,
-    UserName: SAP_CONFIG.username,
-    Password: SAP_CONFIG.password,
-  }, false);
-
-  if (!response.ok) {
-    const error = await response.text();
-    throw new Error(`SAP Login failed: ${response.status} - ${error}`);
+  // If login is already in progress, wait for it
+  if (loginPromise) {
+    console.log('Login already in progress, waiting...');
+    return loginPromise;
   }
 
-  const data = await response.json();
-  sessionId = data.SessionId;
-  sessionExpiry = Date.now() + SESSION_DURATION_MS;
+  // Start new login and store the promise
+  loginPromise = (async () => {
+    try {
+      console.log('Logging in to SAP B1 Service Layer...');
 
-  console.log('SAP B1 login successful');
-  return data;
+      const response = await sapRequest('POST', '/Login', {
+        CompanyDB: SAP_CONFIG.companyDB,
+        UserName: SAP_CONFIG.username,
+        Password: SAP_CONFIG.password,
+      }, false);
+
+      if (!response.ok) {
+        const error = await response.text();
+        throw new Error(`SAP Login failed: ${response.status} - ${error}`);
+      }
+
+      const data = await response.json();
+
+      if (!data.SessionId) {
+        throw new Error('SAP Login response missing SessionId');
+      }
+
+      sessionId = data.SessionId;
+      sessionExpiry = Date.now() + SESSION_DURATION_MS;
+
+      console.log('SAP B1 login successful');
+      return data;
+    } catch (error) {
+      // Clear session on login failure
+      sessionId = null;
+      sessionExpiry = null;
+      throw error;
+    } finally {
+      // Clear the mutex after login completes (success or failure)
+      loginPromise = null;
+    }
+  })();
+
+  return loginPromise;
 }
 
 /**
@@ -101,6 +188,7 @@ async function logout() {
 
 /**
  * Ensure we have a valid session
+ * Uses mutex to prevent concurrent login race conditions
  */
 async function ensureSession() {
   if (!sessionId || !sessionExpiry || Date.now() > sessionExpiry) {
@@ -190,9 +278,13 @@ async function createStockTransfer({ fromWarehouse, toWarehouse, toBinAbsEntry, 
 async function getItemInventory(itemCode, warehouseCode = null) {
   await ensureSession();
 
-  let filter = `ItemCode eq '${itemCode}'`;
+  // Sanitize inputs to prevent OData injection
+  const safeItemCode = sanitizeODataValue(itemCode, 'itemCode');
+  let filter = `ItemCode eq '${safeItemCode}'`;
+
   if (warehouseCode) {
-    filter += ` and WarehouseCode eq '${warehouseCode}'`;
+    const safeWarehouseCode = sanitizeODataValue(warehouseCode, 'warehouseCode');
+    filter += ` and WarehouseCode eq '${safeWarehouseCode}'`;
   }
 
   const response = await sapRequest(
@@ -217,9 +309,12 @@ async function getItemInventory(itemCode, warehouseCode = null) {
 async function getItemBatches(itemCode) {
   await ensureSession();
 
+  // Sanitize input to prevent OData injection
+  const safeItemCode = sanitizeODataValue(itemCode, 'itemCode');
+
   const response = await sapRequest(
     'GET',
-    `/BatchNumberDetails?$filter=ItemCode eq '${itemCode}'`
+    `/BatchNumberDetails?$filter=ItemCode eq '${safeItemCode}'`
   );
 
   if (!response.ok) {
@@ -249,21 +344,31 @@ async function verifyConnection() {
  * Used to map Centros to SAP customers for DeliveryNotes
  *
  * @param {string} search Search term (searches CardCode and CardName)
- * @param {number} limit Max results (default 20)
+ * @param {number} limit Max results (default 20, max 100)
  * @returns {Array} Matching customers
  */
 async function getCustomers(search = '', limit = 20) {
   await ensureSession();
 
+  // Enforce max limit
+  const safeLimit = Math.min(Math.max(1, parseInt(limit) || 20), 100);
+
   let filter = "CardType eq 'cCustomer'";
   if (search) {
-    const searchTerm = search.replace(/'/g, "''"); // Escape single quotes
-    filter += ` and (contains(CardCode,'${searchTerm}') or contains(CardName,'${searchTerm}'))`;
+    // Sanitize search term - allow more characters for names but escape properly
+    const searchTerm = search
+      .trim()
+      .replace(/'/g, "''")  // Escape single quotes
+      .replace(/[<>{}[\]\\]/g, ''); // Remove potentially dangerous chars
+
+    if (searchTerm.length > 0) {
+      filter += ` and (contains(CardCode,'${searchTerm}') or contains(CardName,'${searchTerm}'))`;
+    }
   }
 
   const response = await sapRequest(
     'GET',
-    `/BusinessPartners?$filter=${encodeURIComponent(filter)}&$select=CardCode,CardName,Phone1,EmailAddress,Address&$top=${limit}&$orderby=CardName`
+    `/BusinessPartners?$filter=${encodeURIComponent(filter)}&$select=CardCode,CardName,Phone1,EmailAddress,Address&$top=${safeLimit}&$orderby=CardName`
   );
 
   if (!response.ok) {

@@ -768,14 +768,22 @@ exports.retrySap = async (req, res, next) => {
     const Locaciones = await getLocacionesModel(req.companyId);
     const Productos = await getProductosModel(req.companyId);
 
+    const MAX_RETRIES = 5;
+
     // Atomically claim the retry - only succeeds if not already synced or retrying
+    // Also check retry count limit
     const consignacion = await Consignaciones.findOneAndUpdate(
       {
         _id: req.params.id,
         sapTransferStatus: { $nin: ['CREATED', 'RETRYING'] },
+        $or: [
+          { sapRetryCount: { $exists: false } },
+          { sapRetryCount: { $lt: MAX_RETRIES } },
+        ],
       },
       {
         $set: { sapTransferStatus: 'RETRYING' },
+        $inc: { sapRetryCount: 1 },
       },
       { new: true }
     );
@@ -791,6 +799,9 @@ exports.retrySap = async (req, res, next) => {
       }
       if (existing.sapTransferStatus === 'RETRYING') {
         return res.status(409).json({ error: 'Ya hay un reintento en progreso' });
+      }
+      if ((existing.sapRetryCount || 0) >= MAX_RETRIES) {
+        return res.status(400).json({ error: `Se alcanzó el límite de ${MAX_RETRIES} reintentos` });
       }
       return res.status(400).json({ error: 'No se pudo iniciar el reintento' });
     }

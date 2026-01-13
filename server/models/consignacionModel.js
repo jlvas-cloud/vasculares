@@ -67,13 +67,18 @@ const consignacionSchema = new Schema({
   },
   sapTransferStatus: {
     type: String,
-    enum: ['PENDING', 'CREATED', 'FAILED', 'RETRYING'],
+    enum: [null, 'CREATED', 'FAILED', 'RETRYING'],  // null = pre-confirmation, transfer not yet attempted
     default: null,
     description: 'Status of SAP stock transfer creation',
   },
   sapError: {
     type: String,
     description: 'Error message if SAP transfer failed',
+  },
+  sapRetryCount: {
+    type: Number,
+    default: 0,
+    description: 'Number of SAP sync retry attempts',
   },
 
   // Creation tracking
@@ -108,6 +113,7 @@ consignacionSchema.index({ fromLocationId: 1, createdAt: -1 });
 consignacionSchema.index({ toLocationId: 1, createdAt: -1 });
 consignacionSchema.index({ createdAt: -1 });
 consignacionSchema.index({ sapDocNum: 1 }, { sparse: true });
+consignacionSchema.index({ sapTransferStatus: 1 });  // For querying failed SAP transfers
 
 // Virtual to check if consignment is old (> 3 days in transit)
 consignacionSchema.virtual('isOld').get(function() {

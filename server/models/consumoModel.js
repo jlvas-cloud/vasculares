@@ -69,6 +69,11 @@ const consumoSchema = new Schema({
     },
     pushedAt: Date,
     error: String,
+    retryCount: {
+      type: Number,
+      default: 0,
+      description: 'Number of SAP sync retry attempts',
+    },
   },
 
   // Totals
@@ -104,6 +109,7 @@ const consumoSchema = new Schema({
 // Indexes
 consumoSchema.index({ centroId: 1, createdAt: -1 });
 consumoSchema.index({ 'sapSync.sapDocNum': 1 }, { sparse: true });
+consumoSchema.index({ 'sapSync.pushed': 1 });  // For querying failed SAP syncs
 consumoSchema.index({ status: 1 });
 consumoSchema.index({ createdAt: -1 });
 

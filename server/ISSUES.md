@@ -34,20 +34,23 @@
 
 ## HIGH PRIORITY ISSUES
 
-### 4. [ ] Session Race Conditions in SAP Service
+### 4. [x] Session Race Conditions in SAP Service
 **Location:** `services/sapService.js:50-55, 105-109`
 **Risk:** Multiple concurrent requests can trigger simultaneous login() calls, causing session confusion.
 **Solution:** Implement login mutex/lock using Promise-based queue.
+**Fixed:** 2026-01-12 - Added loginPromise mutex to prevent concurrent login attempts.
 
-### 5. [ ] OData Filter Injection
+### 5. [x] OData Filter Injection
 **Location:** `services/sapService.js:193, 222, 261`
 **Risk:** Unsanitized input in OData filter expressions could allow injection attacks.
 **Solution:** Validate input format (alphanumeric only) or use parameterized queries.
+**Fixed:** 2026-01-12 - Added sanitizeODataValue() function with regex validation.
 
-### 6. [ ] No Idempotency Keys for Retries
+### 6. [x] No Idempotency Keys for Retries
 **Location:** All retry functions
 **Risk:** No way to detect/prevent duplicate requests.
 **Solution:** Generate and store idempotency keys, check before creating SAP documents.
+**Fixed:** 2026-01-12 - Optimistic locking with RETRYING status prevents duplicate SAP documents.
 
 ---
 
@@ -62,10 +65,11 @@
 - `transaccionModel` uses `sapIntegration.pushed`
 **Solution:** Standardize to single naming convention across all models.
 
-### 8. [ ] No Request Timeouts in SAP Service
+### 8. [x] No Request Timeouts in SAP Service
 **Location:** `services/sapService.js:47`
 **Risk:** Hung SAP connections block indefinitely.
 **Solution:** Use AbortController with 30-second timeout.
+**Fixed:** 2026-01-12 - Added AbortController with 30-second timeout to all SAP requests.
 
 ### 9. [ ] Inconsistent Status Enums
 **Location:** Multiple models
@@ -75,23 +79,26 @@
 - `goodsReceiptModel`: No status enum, only `pushed` boolean
 **Solution:** Standardize SAP sync status across all models.
 
-### 10. [ ] Missing Database Indexes for SAP Queries
+### 10. [x] Missing Database Indexes for SAP Queries
 **Location:** Multiple models
 **Details:**
 - `consignacionModel`: Missing `sapTransferStatus` index
 - `consumoModel`: Missing `sapSync.pushed` index
 - `goodsReceiptModel`: Missing `sapIntegration.pushed` index
 **Solution:** Add indexes for frequently queried SAP fields.
+**Fixed:** 2026-01-12 - Added sapTransferStatus and sapSync.pushed indexes.
 
-### 11. [ ] Null vs 'PENDING' Default Inconsistency
+### 11. [x] Null vs 'PENDING' Default Inconsistency
 **Location:** `consignacionModel.sapTransferStatus`
 **Risk:** Queries for `sapTransferStatus === 'PENDING'` miss records with `null`.
 **Solution:** Use consistent defaults or adjust queries.
+**Fixed:** 2026-01-12 - Removed unused 'PENDING' from enum, documented null as valid pre-confirmation state.
 
-### 12. [ ] No Retry Count Limits
+### 12. [x] No Retry Count Limits
 **Location:** `consumption.js`, `consignaciones.js` retry functions
 **Risk:** Users can retry indefinitely.
 **Solution:** Add retryCount field and max retry limit (like goodsReceipt has).
+**Fixed:** 2026-01-12 - Added retryCount fields and MAX_RETRIES=5 limit to all retry functions.
 
 ---
 
@@ -153,7 +160,7 @@ Log errors to monitoring service for visibility.
 | Priority | Total | Done | Remaining |
 |----------|-------|------|-----------|
 | Critical | 3 | 3 | 0 |
-| High | 3 | 0 | 3 |
-| Medium | 6 | 0 | 6 |
+| High | 3 | 3 | 0 |
+| Medium | 6 | 4 | 2 |
 | Low | 6 | 0 | 6 |
-| **Total** | **18** | **3** | **15** |
+| **Total** | **18** | **10** | **8** |

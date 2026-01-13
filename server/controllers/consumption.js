@@ -526,15 +526,23 @@ exports.retrySap = async (req, res, next) => {
 
     const Consumos = await getConsumosModel(req.companyId);
 
+    const MAX_RETRIES = 5;
+
     // Atomically claim the retry - only succeeds if not already synced or retrying
+    // Also check retry count limit
     const consumo = await Consumos.findOneAndUpdate(
       {
         _id: id,
         'sapSync.pushed': false,
         status: { $ne: 'RETRYING' },
+        $or: [
+          { 'sapSync.retryCount': { $exists: false } },
+          { 'sapSync.retryCount': { $lt: MAX_RETRIES } },
+        ],
       },
       {
         $set: { status: 'RETRYING' },
+        $inc: { 'sapSync.retryCount': 1 },
       },
       { new: true }
     );
@@ -550,6 +558,9 @@ exports.retrySap = async (req, res, next) => {
       }
       if (existing.status === 'RETRYING') {
         return res.status(409).json({ error: 'Ya hay un reintento en progreso' });
+      }
+      if ((existing.sapSync?.retryCount || 0) >= MAX_RETRIES) {
+        return res.status(400).json({ error: `Se alcanzó el límite de ${MAX_RETRIES} reintentos` });
       }
       return res.status(400).json({ error: 'No se pudo iniciar el reintento' });
     }
