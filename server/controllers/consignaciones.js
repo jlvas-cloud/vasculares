@@ -2,6 +2,9 @@
  * Consignaciones Controller
  * Handle bulk consignments from warehouse to centros
  * Integrates with SAP Business One for stock transfers
+ *
+ * ATOMIC: SAP is called FIRST. If SAP fails, nothing is saved locally.
+ * If SAP succeeds, local changes are committed in a transaction.
  */
 const mongoose = require('mongoose');
 const {
@@ -127,6 +130,9 @@ exports.getOne = async (req, res, next) => {
  * POST /api/consignaciones
  * Create bulk consignment with SAP integration
  *
+ * ATOMIC: SAP is called FIRST. If SAP fails, nothing is saved locally.
+ * If SAP succeeds, local changes are committed in a transaction.
+ *
  * Request body:
  * - fromLocationId: Warehouse location ID
  * - toLocationId: Centro location ID
@@ -135,45 +141,37 @@ exports.getOne = async (req, res, next) => {
  * - skipSap: Optional flag to skip SAP integration (for testing)
  *
  * Flow:
- * 1. Validate locations and items
- * 2. Validate each specified lot has enough stock
- * 3. Create SAP Stock Transfer (if SAP enabled)
- * 4. Update local inventory
- * 5. Create consignment record with SAP DocNum
+ * 1. Validate locations and items (no saves)
+ * 2. Create SAP Stock Transfer first
+ * 3. If SAP fails → return error, save nothing
+ * 4. If SAP succeeds → commit local changes in transaction
  */
 exports.create = async (req, res, next) => {
-  const session = await mongoose.startSession();
-  session.startTransaction();
-
   try {
     const errors = validationResult(req);
     if (!errors.isEmpty()) {
-      await session.abortTransaction();
-      session.endSession();
       return res.status(400).json({ errors: errors.array() });
     }
 
     const { fromLocationId, toLocationId, items, notes, skipSap } = req.body;
 
+    // ============================================
+    // PHASE 1: VALIDATION (no saves)
+    // ============================================
+
     // Validate locations exist
     const Locaciones = await getLocacionesModel(req.companyId);
-    const fromLocation = await Locaciones.findById(fromLocationId).session(session);
-    const toLocation = await Locaciones.findById(toLocationId).session(session);
+    const fromLocation = await Locaciones.findById(fromLocationId).lean();
+    const toLocation = await Locaciones.findById(toLocationId).lean();
 
     if (!fromLocation) {
-      await session.abortTransaction();
-      session.endSession();
       return res.status(404).json({ error: 'Warehouse location not found' });
     }
     if (!toLocation) {
-      await session.abortTransaction();
-      session.endSession();
       return res.status(404).json({ error: 'Centro location not found' });
     }
 
     if (fromLocation.type !== 'WAREHOUSE') {
-      await session.abortTransaction();
-      session.endSession();
       return res.status(400).json({ error: 'From location must be a warehouse' });
     }
 
@@ -183,34 +181,27 @@ exports.create = async (req, res, next) => {
       toLocation.sapIntegration?.warehouseCode;
 
     const Lotes = await getLotesModel(req.companyId);
-    const Transacciones = await getTransaccionesModel(req.companyId);
     const Productos = await getProductosModel(req.companyId);
 
-    // Validate all items and prepare SAP transfer data
+    // Validate all items and prepare SAP transfer data (NO SAVES YET)
     const sapTransferItems = [];
     const processedItems = [];
 
     for (const item of items) {
-      const product = await Productos.findById(item.productId).session(session);
+      const product = await Productos.findById(item.productId).lean();
       if (!product) {
-        await session.abortTransaction();
-        session.endSession();
         return res.status(404).json({ error: `Product ${item.productId} not found` });
       }
 
       // Check if item specifies a specific lot (SAP mode) or needs FIFO
       if (item.loteId && item.lotNumber) {
         // SAP mode: use specified lot
-        const lote = await Lotes.findById(item.loteId).session(session);
+        const lote = await Lotes.findById(item.loteId).lean();
         if (!lote) {
-          await session.abortTransaction();
-          session.endSession();
           return res.status(404).json({ error: `Lot ${item.loteId} not found` });
         }
 
         if (lote.quantityAvailable < item.quantitySent) {
-          await session.abortTransaction();
-          session.endSession();
           return res.status(400).json({
             error: `Insufficient stock in lot ${item.lotNumber}. Available: ${lote.quantityAvailable}, Requested: ${item.quantitySent}`,
           });
@@ -236,12 +227,10 @@ exports.create = async (req, res, next) => {
           productId: item.productId,
           currentLocationId: fromLocationId,
           quantityAvailable: { $gt: 0 },
-        }).sort({ expiryDate: 1 }).session(session);
+        }).sort({ expiryDate: 1 }).lean();
 
         const totalAvailable = availableLotes.reduce((sum, l) => sum + l.quantityAvailable, 0);
         if (totalAvailable < item.quantitySent) {
-          await session.abortTransaction();
-          session.endSession();
           return res.status(400).json({
             error: `Insufficient stock for ${product.name}. Available: ${totalAvailable}, Requested: ${item.quantitySent}`,
           });
@@ -276,10 +265,11 @@ exports.create = async (req, res, next) => {
       }
     }
 
-    // Create SAP Stock Transfer if enabled
+    // ============================================
+    // PHASE 2: SAP CALL (before any local saves)
+    // ============================================
+
     let sapResult = null;
-    let sapTransferStatus = null;
-    let sapError = null;
 
     if (sapEnabled && sapTransferItems.length > 0) {
       try {
@@ -290,149 +280,193 @@ exports.create = async (req, res, next) => {
           items: sapTransferItems,
           comments: `Consignación Vasculares - ${toLocation.name}`,
         });
-        sapTransferStatus = 'CREATED';
         console.log('SAP Stock Transfer created:', sapResult);
-      } catch (err) {
-        console.error('SAP Stock Transfer failed:', err.message);
-        sapTransferStatus = 'FAILED';
-        sapError = err.message;
-        // Continue with local record creation even if SAP fails
+      } catch (sapError) {
+        // SAP failed - return error, save nothing locally
+        console.error('SAP Stock Transfer failed:', sapError.message);
+        return res.status(500).json({
+          success: false,
+          error: `SAP Error: ${sapError.message}`,
+          sapError: sapError.message,
+        });
       }
     }
 
-    // Create consignment record
-    const Consignaciones = await getConsignacionesModel(req.companyId);
-    const consignacion = new Consignaciones({
-      fromLocationId,
-      toLocationId,
-      status: 'EN_TRANSITO',
-      items: processedItems.map((item) => ({
-        productId: item.productId,
-        loteId: item.loteId || item.lote._id,
-        lotNumber: item.lotNumber || item.lote.lotNumber,
-        quantitySent: item.quantitySent,
-        quantityReceived: null,
-        notes: item.notes || '',
-      })),
-      sapDocNum: sapResult?.DocNum || null,
-      sapTransferStatus,
-      sapError,
-      createdBy: {
-        _id: req.user._id,
-        firstname: req.user.firstname,
-        lastname: req.user.lastname,
-        email: req.user.email,
-      },
-      notes: notes || '',
-    });
+    // ============================================
+    // PHASE 3: LOCAL SAVES (in transaction)
+    // SAP succeeded (or not required), now commit local changes
+    // ============================================
 
-    await consignacion.save({ session });
+    const session = await mongoose.startSession();
+    session.startTransaction();
 
-    // Process inventory updates for each item
-    for (const item of processedItems) {
-      const lote = item.lote;
-      const toDeduct = item.quantitySent;
+    try {
+      const Transacciones = await getTransaccionesModel(req.companyId);
+      const Consignaciones = await getConsignacionesModel(req.companyId);
 
-      // Update warehouse lote: reduce available, increase consigned
-      lote.quantityAvailable -= toDeduct;
-      lote.quantityConsigned += toDeduct;
-      await lote.save({ session });
-
-      // Create or update centro lote
-      let centroLote = await Lotes.findOne({
-        productId: item.productId,
-        lotNumber: lote.lotNumber,
-        currentLocationId: toLocationId,
-      }).session(session);
-
-      if (centroLote) {
-        centroLote.quantityTotal += toDeduct;
-        centroLote.quantityConsigned += toDeduct;
-        if (!centroLote.historia) centroLote.historia = [];
-        centroLote.historia.push({
-          fecha: new Date(),
-          tipo: 'CONSIGNMENT_SENT',
-          cantidad: toDeduct,
-          usuario: `${req.user.firstname} ${req.user.lastname}`,
-          detalles: `In transit from ${fromLocation.name} - Consignment #${consignacion._id}`,
-        });
-        await centroLote.save({ session });
-      } else {
-        centroLote = new Lotes({
-          productId: item.productId,
-          lotNumber: lote.lotNumber,
-          expiryDate: lote.expiryDate,
-          manufactureDate: lote.manufactureDate,
-          quantityTotal: toDeduct,
-          quantityAvailable: 0,
-          quantityConsigned: toDeduct,
-          quantityConsumed: 0,
-          currentLocationId: toLocationId,
-          status: 'ACTIVE',
-          receivedDate: new Date(),
-          supplier: lote.supplier,
-          unitCost: lote.unitCost,
-          createdBy: {
-            _id: req.user._id,
-            firstname: req.user.firstname,
-            lastname: req.user.lastname,
-          },
-          historia: [{
-            fecha: new Date(),
-            tipo: 'CONSIGNMENT_SENT',
-            cantidad: toDeduct,
-            usuario: `${req.user.firstname} ${req.user.lastname}`,
-            detalles: `In transit from ${fromLocation.name} - Consignment #${consignacion._id}`,
-          }],
-        });
-        await centroLote.save({ session });
-      }
-
-      // Create transaction record
-      const transaccion = new Transacciones({
-        type: 'CONSIGNMENT',
-        productId: item.productId,
-        lotId: lote._id,
-        lotNumber: lote.lotNumber,
+      // Create consignment record first to get the ID
+      const consignacion = new Consignaciones({
         fromLocationId,
         toLocationId,
-        quantity: toDeduct,
-        notes: `Consignment #${consignacion._id} - ${toLocation.name}${sapResult?.DocNum ? ` - SAP #${sapResult.DocNum}` : ''}`,
-        performedBy: {
+        status: 'EN_TRANSITO',
+        items: processedItems.map((item) => ({
+          productId: item.productId,
+          loteId: item.loteId || item.lote._id,
+          lotNumber: item.lotNumber || item.lote.lotNumber,
+          quantitySent: item.quantitySent,
+          quantityReceived: null,
+          notes: item.notes || '',
+        })),
+        sapDocNum: sapResult?.DocNum || null,
+        sapTransferStatus: sapEnabled ? 'CREATED' : null,
+        sapError: null,
+        createdBy: {
           _id: req.user._id,
           firstname: req.user.firstname,
           lastname: req.user.lastname,
           email: req.user.email,
         },
-        status: 'COMPLETED',
+        notes: notes || '',
       });
-      await transaccion.save({ session });
 
-      // Update inventory aggregations
-      await updateInventario(req.companyId, item.productId, fromLocationId, session);
-      await updateInventario(req.companyId, item.productId, toLocationId, session);
+      await consignacion.save({ session });
+
+      // Process inventory updates for each item
+      for (const item of processedItems) {
+        const lote = item.lote;
+        const toDeduct = item.quantitySent;
+
+        // Update warehouse lote: reduce available, increase consigned
+        await Lotes.findByIdAndUpdate(
+          lote._id,
+          {
+            $inc: {
+              quantityAvailable: -toDeduct,
+              quantityConsigned: toDeduct,
+            },
+          },
+          { session }
+        );
+
+        // Create or update centro lote
+        const existingCentroLote = await Lotes.findOne({
+          productId: item.productId,
+          lotNumber: lote.lotNumber,
+          currentLocationId: toLocationId,
+        }).session(session);
+
+        if (existingCentroLote) {
+          await Lotes.findByIdAndUpdate(
+            existingCentroLote._id,
+            {
+              $inc: {
+                quantityTotal: toDeduct,
+                quantityConsigned: toDeduct,
+              },
+              $push: {
+                historia: {
+                  fecha: new Date(),
+                  tipo: 'CONSIGNMENT_SENT',
+                  cantidad: toDeduct,
+                  usuario: `${req.user.firstname} ${req.user.lastname}`,
+                  detalles: `In transit from ${fromLocation.name} - Consignment #${consignacion._id}${sapResult ? ` - SAP #${sapResult.DocNum}` : ''}`,
+                },
+              },
+            },
+            { session }
+          );
+        } else {
+          const centroLote = new Lotes({
+            productId: item.productId,
+            lotNumber: lote.lotNumber,
+            expiryDate: lote.expiryDate,
+            manufactureDate: lote.manufactureDate,
+            quantityTotal: toDeduct,
+            quantityAvailable: 0,
+            quantityConsigned: toDeduct,
+            quantityConsumed: 0,
+            currentLocationId: toLocationId,
+            status: 'ACTIVE',
+            receivedDate: new Date(),
+            supplier: lote.supplier,
+            unitCost: lote.unitCost,
+            createdBy: {
+              _id: req.user._id,
+              firstname: req.user.firstname,
+              lastname: req.user.lastname,
+            },
+            historia: [{
+              fecha: new Date(),
+              tipo: 'CONSIGNMENT_SENT',
+              cantidad: toDeduct,
+              usuario: `${req.user.firstname} ${req.user.lastname}`,
+              detalles: `In transit from ${fromLocation.name} - Consignment #${consignacion._id}${sapResult ? ` - SAP #${sapResult.DocNum}` : ''}`,
+            }],
+          });
+          await centroLote.save({ session });
+        }
+
+        // Create transaction record
+        const transaccion = new Transacciones({
+          type: 'CONSIGNMENT',
+          productId: item.productId,
+          lotId: lote._id,
+          lotNumber: lote.lotNumber,
+          fromLocationId,
+          toLocationId,
+          quantity: toDeduct,
+          notes: `Consignment #${consignacion._id} - ${toLocation.name}${sapResult?.DocNum ? ` - SAP #${sapResult.DocNum}` : ''}`,
+          performedBy: {
+            _id: req.user._id,
+            firstname: req.user.firstname,
+            lastname: req.user.lastname,
+            email: req.user.email,
+          },
+          status: 'COMPLETED',
+        });
+        await transaccion.save({ session });
+
+        // Update inventory aggregations
+        await updateInventario(req.companyId, item.productId, fromLocationId, session);
+        await updateInventario(req.companyId, item.productId, toLocationId, session);
+      }
+
+      await session.commitTransaction();
+
+      // Build response
+      const response = {
+        message: 'Consignment created successfully',
+        consignacion,
+      };
+
+      if (sapResult) {
+        response.sapDocNum = sapResult.DocNum;
+        response.sapDocEntry = sapResult.DocEntry;
+      }
+
+      res.status(201).json(response);
+
+    } catch (localError) {
+      // Local save failed after SAP succeeded
+      // This is a critical error - SAP has the document but local doesn't
+      await session.abortTransaction();
+      console.error('CRITICAL: SAP succeeded but local save failed:', localError);
+      if (sapResult) {
+        console.error('SAP Document created:', sapResult);
+      }
+
+      return res.status(500).json({
+        success: false,
+        error: 'Error guardando localmente después de crear documento SAP. Contacte soporte.',
+        sapResult,
+        localError: localError.message,
+        requiresManualReconciliation: !!sapResult,
+      });
+    } finally {
+      session.endSession();
     }
 
-    await session.commitTransaction();
-    session.endSession();
-
-    // Build response
-    const response = {
-      message: 'Consignment created successfully',
-      consignacion,
-    };
-
-    if (sapResult) {
-      response.sapDocNum = sapResult.DocNum;
-      response.sapDocEntry = sapResult.DocEntry;
-    } else if (sapTransferStatus === 'FAILED') {
-      response.sapWarning = `SAP transfer failed: ${sapError}. Local record created.`;
-    }
-
-    res.status(201).json(response);
   } catch (error) {
-    await session.abortTransaction();
-    session.endSession();
     console.error('Error creating consignment:', error);
     next(error);
   }

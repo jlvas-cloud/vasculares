@@ -2,7 +2,11 @@
  * Goods Receipt Controller
  * Handle goods receipts with SAP integration
  * Creates local lotes/inventory AND pushes to SAP PurchaseDeliveryNotes
+ *
+ * ATOMIC: SAP is called FIRST. If SAP fails, nothing is saved locally.
+ * If SAP succeeds, local changes are committed in a transaction.
  */
+const mongoose = require('mongoose');
 const {
   getLotesModel,
   getInventarioModel,
@@ -16,15 +20,19 @@ const { extractPackingList } = require('../services/extractionService');
 
 /**
  * Helper: Update or create inventory record
+ * @param {string} companyId - Company ID for multi-tenant DB
+ * @param {ObjectId} productId - Product ID
+ * @param {ObjectId} locationId - Location ID
+ * @param {Object} session - Optional MongoDB session for transactions
  */
-async function updateInventario(companyId, productId, locationId) {
+async function updateInventario(companyId, productId, locationId, session = null) {
   const Inventario = await getInventarioModel(companyId);
   const Lotes = await getLotesModel(companyId);
 
   const lotes = await Lotes.find({
     productId,
     currentLocationId: locationId
-  });
+  }).session(session);
 
   const aggregated = lotes.reduce((acc, lote) => {
     acc.quantityTotal += lote.quantityTotal || 0;
@@ -43,6 +51,9 @@ async function updateInventario(companyId, productId, locationId) {
     quantityReturned: 0
   });
 
+  const options = { upsert: true, new: true };
+  if (session) options.session = session;
+
   await Inventario.findOneAndUpdate(
     { productId, locationId },
     {
@@ -52,13 +63,16 @@ async function updateInventario(companyId, productId, locationId) {
         updatedAt: new Date()
       }
     },
-    { upsert: true, new: true }
+    options
   );
 }
 
 /**
  * POST /api/goods-receipt
  * Create goods receipt - saves locally and pushes to SAP
+ *
+ * ATOMIC: SAP is called FIRST. If SAP fails, nothing is saved locally.
+ * If SAP succeeds, local changes are committed in a transaction.
  *
  * Body: {
  *   locationId: ObjectId (warehouse),
@@ -77,6 +91,10 @@ exports.createGoodsReceipt = async (req, res, next) => {
   try {
     const { locationId, items, supplier, supplierCode, notes, pushToSap = true } = req.body;
 
+    // ============================================
+    // PHASE 1: VALIDATION (no saves)
+    // ============================================
+
     // Validate request
     if (!locationId || !items || items.length === 0) {
       return res.status(400).json({ error: 'locationId and items are required' });
@@ -84,7 +102,7 @@ exports.createGoodsReceipt = async (req, res, next) => {
 
     // Validate location exists and is a warehouse
     const Locaciones = await getLocacionesModel(req.companyId);
-    const location = await Locaciones.findById(locationId);
+    const location = await Locaciones.findById(locationId).lean();
     if (!location) {
       return res.status(404).json({ error: 'Location not found' });
     }
@@ -98,7 +116,7 @@ exports.createGoodsReceipt = async (req, res, next) => {
     // Validate all products exist and have SAP codes
     const Productos = await getProductosModel(req.companyId);
     const productIds = items.map(i => i.productId);
-    const products = await Productos.find({ _id: { $in: productIds } });
+    const products = await Productos.find({ _id: { $in: productIds } }).lean();
 
     if (products.length !== productIds.length) {
       return res.status(400).json({ error: 'One or more products not found' });
@@ -126,207 +144,243 @@ exports.createGoodsReceipt = async (req, res, next) => {
       }
     }
 
-    // Create local records
+    // Validate SAP requirements if pushing to SAP
+    if (pushToSap && !supplierCode) {
+      return res.status(400).json({
+        error: 'Supplier code is required for SAP integration (e.g., P00031 for Centralmed)'
+      });
+    }
+
+    // Check for existing lots (read-only, no saves yet)
     const Lotes = await getLotesModel(req.companyId);
-    const Transacciones = await getTransaccionesModel(req.companyId);
-    const createdLotes = [];
-    const transactions = [];
-
+    const existingLots = {};
     for (const item of items) {
-      const product = productMap[item.productId];
-
-      // Check if lot already exists
-      let lote = await Lotes.findOne({
+      const existingLot = await Lotes.findOne({
         productId: item.productId,
         lotNumber: item.lotNumber,
         currentLocationId: locationId
-      });
+      }).lean();
+      if (existingLot) {
+        existingLots[`${item.productId}-${item.lotNumber}`] = existingLot;
+      }
+    }
 
-      if (lote) {
-        // Add to existing lot
-        lote.quantityTotal += item.quantity;
-        lote.quantityAvailable += item.quantity;
-        lote.historia.push({
-          fecha: new Date(),
-          user: {
-            _id: req.user._id,
-            firstname: req.user.firstname,
-            lastname: req.user.lastname
-          },
-          accion: 'Recepción de mercancía',
-          detalles: `Cantidad: ${item.quantity}${supplier ? `, Proveedor: ${supplier}` : ''}`
-        });
-        await lote.save();
-      } else {
-        // Create new lot
-        lote = new Lotes({
-          productId: item.productId,
-          lotNumber: item.lotNumber,
-          expiryDate: new Date(item.expiryDate),
-          quantityTotal: item.quantity,
-          quantityAvailable: item.quantity,
-          quantityConsigned: 0,
-          quantityConsumed: 0,
-          currentLocationId: locationId,
-          status: 'ACTIVE',
-          receivedDate: new Date(),
+    // ============================================
+    // PHASE 2: SAP CALL (before any local saves)
+    // ============================================
+
+    let sapResult = null;
+    if (pushToSap) {
+      try {
+        sapResult = await pushToSapGoodsReceipt({
+          items,
+          productMap,
+          sapWarehouseCode,
           supplier,
-          createdBy: {
-            _id: req.user._id,
-            firstname: req.user.firstname,
-            lastname: req.user.lastname
-          },
-          historia: [{
+          supplierCode,
+          notes
+        });
+      } catch (sapError) {
+        // SAP failed - return error, save nothing locally
+        console.error('SAP PurchaseDeliveryNote creation failed:', sapError);
+        return res.status(500).json({
+          success: false,
+          error: `SAP Error: ${sapError.message}`,
+          sapError: sapError.message,
+        });
+      }
+    }
+
+    // ============================================
+    // PHASE 3: LOCAL SAVES (in transaction)
+    // SAP succeeded (or not required), now commit local changes
+    // ============================================
+
+    const session = await mongoose.startSession();
+    session.startTransaction();
+
+    try {
+      const Transacciones = await getTransaccionesModel(req.companyId);
+      const GoodsReceipts = await getGoodsReceiptsModel(req.companyId);
+      const createdLotes = [];
+      const transactions = [];
+
+      for (const item of items) {
+        const product = productMap[item.productId];
+        const existingLotKey = `${item.productId}-${item.lotNumber}`;
+        const existingLot = existingLots[existingLotKey];
+
+        let lote;
+        if (existingLot) {
+          // Update existing lot
+          const historyEntry = {
             fecha: new Date(),
             user: {
               _id: req.user._id,
               firstname: req.user.firstname,
               lastname: req.user.lastname
             },
-            accion: 'Lote recibido',
-            detalles: `Cantidad: ${item.quantity}`
-          }]
-        });
-        await lote.save();
-      }
-
-      createdLotes.push(lote);
-
-      // Create transaction record
-      const transaccion = new Transacciones({
-        type: 'WAREHOUSE_RECEIPT',
-        productId: item.productId,
-        lotId: lote._id,
-        lotNumber: item.lotNumber,
-        toLocationId: locationId,
-        quantity: item.quantity,
-        warehouseReceipt: {
-          lotNumber: item.lotNumber,
-          expiryDate: new Date(item.expiryDate),
-          supplier
-        },
-        transactionDate: new Date(),
-        notes,
-        performedBy: {
-          _id: req.user._id,
-          firstname: req.user.firstname,
-          lastname: req.user.lastname,
-          email: req.user.email
-        },
-        status: 'COMPLETED'
-      });
-      await transaccion.save();
-      transactions.push(transaccion);
-
-      // Update inventory
-      await updateInventario(req.companyId, item.productId, locationId);
-    }
-
-    // Push to SAP if enabled
-    let sapResult = null;
-    if (pushToSap) {
-      // SupplierCode is required for PurchaseDeliveryNotes (Entrada de Mercancía)
-      if (!supplierCode) {
-        sapResult = {
-          success: false,
-          error: 'Supplier code is required for SAP integration (e.g., P00031 for Centralmed)'
-        };
-      } else {
-        try {
-          sapResult = await pushToSapGoodsReceipt({
-            items,
-            productMap,
-            sapWarehouseCode,
-            supplier,
-            supplierCode,
-            notes
-          });
-        } catch (sapError) {
-          console.error('SAP push failed:', sapError);
-          // Don't fail the whole operation - local records are created
-          sapResult = {
-            success: false,
-            error: sapError.message
+            accion: 'Recepción de mercancía',
+            detalles: `Cantidad: ${item.quantity}${supplier ? `, Proveedor: ${supplier}` : ''}${sapResult ? `, SAP Doc: ${sapResult.sapDocNum}` : ''}`
           };
+
+          lote = await Lotes.findByIdAndUpdate(
+            existingLot._id,
+            {
+              $inc: {
+                quantityTotal: item.quantity,
+                quantityAvailable: item.quantity
+              },
+              $push: { historia: historyEntry }
+            },
+            { new: true, session }
+          );
+        } else {
+          // Create new lot
+          lote = new Lotes({
+            productId: item.productId,
+            lotNumber: item.lotNumber,
+            expiryDate: new Date(item.expiryDate),
+            quantityTotal: item.quantity,
+            quantityAvailable: item.quantity,
+            quantityConsigned: 0,
+            quantityConsumed: 0,
+            currentLocationId: locationId,
+            status: 'ACTIVE',
+            receivedDate: new Date(),
+            supplier,
+            createdBy: {
+              _id: req.user._id,
+              firstname: req.user.firstname,
+              lastname: req.user.lastname
+            },
+            historia: [{
+              fecha: new Date(),
+              user: {
+                _id: req.user._id,
+                firstname: req.user.firstname,
+                lastname: req.user.lastname
+              },
+              accion: 'Lote recibido',
+              detalles: `Cantidad: ${item.quantity}${sapResult ? `, SAP Doc: ${sapResult.sapDocNum}` : ''}`
+            }]
+          });
+          await lote.save({ session });
         }
+
+        createdLotes.push(lote);
+
+        // Create transaction record
+        const transaccion = new Transacciones({
+          type: 'WAREHOUSE_RECEIPT',
+          productId: item.productId,
+          lotId: lote._id,
+          lotNumber: item.lotNumber,
+          toLocationId: locationId,
+          quantity: item.quantity,
+          warehouseReceipt: {
+            lotNumber: item.lotNumber,
+            expiryDate: new Date(item.expiryDate),
+            supplier
+          },
+          transactionDate: new Date(),
+          notes,
+          performedBy: {
+            _id: req.user._id,
+            firstname: req.user.firstname,
+            lastname: req.user.lastname,
+            email: req.user.email
+          },
+          status: 'COMPLETED',
+          sapIntegration: pushToSap ? {
+            pushed: true,
+            docEntry: sapResult.sapDocEntry,
+            docNum: sapResult.sapDocNum,
+            docType: 'PurchaseDeliveryNotes',
+            syncDate: new Date()
+          } : undefined
+        });
+        await transaccion.save({ session });
+        transactions.push(transaccion);
+
+        // Update inventory
+        await updateInventario(req.companyId, item.productId, locationId, session);
       }
 
-      // Update all transactions with SAP sync status
-      const Transacciones = await getTransaccionesModel(req.companyId);
-      const sapIntegrationData = {
-        pushed: sapResult?.success || false,
-        syncDate: new Date(),
-        ...(sapResult?.success && {
+      // Save to GoodsReceipts collection for history tracking
+      const goodsReceipt = new GoodsReceipts({
+        receiptDate: new Date(),
+        locationId,
+        locationName: location.name,
+        sapWarehouseCode,
+        supplier,
+        supplierCode,
+        notes,
+        items: items.map((item, idx) => {
+          const product = productMap[item.productId];
+          return {
+            productId: item.productId,
+            productName: product.name,
+            sapItemCode: product.sapItemCode,
+            lotNumber: item.lotNumber,
+            quantity: item.quantity,
+            expiryDate: new Date(item.expiryDate),
+            loteId: createdLotes[idx]._id,
+            transactionId: transactions[idx]._id
+          };
+        }),
+        sapIntegration: pushToSap ? {
+          pushed: true,
           docEntry: sapResult.sapDocEntry,
           docNum: sapResult.sapDocNum,
-          docType: sapResult.sapDocType || 'PurchaseDeliveryNotes',
-        }),
-        ...(!sapResult?.success && {
-          error: sapResult?.error || 'Unknown error',
-        }),
-      };
-
-      // Update all transactions created in this receipt
-      const transactionIds = transactions.map(t => t._id);
-      await Transacciones.updateMany(
-        { _id: { $in: transactionIds } },
-        { $set: { sapIntegration: sapIntegrationData } }
-      );
-
-      // Update the transactions array with SAP info for response
-      transactions.forEach(t => {
-        t.sapIntegration = sapIntegrationData;
+          docType: 'PurchaseDeliveryNotes',
+          syncDate: new Date(),
+          retryCount: 0
+        } : {
+          pushed: false,
+          error: 'SAP sync disabled',
+          syncDate: new Date(),
+          retryCount: 0
+        },
+        createdBy: {
+          _id: req.user._id,
+          firstname: req.user.firstname,
+          lastname: req.user.lastname
+        }
       });
-    }
+      await goodsReceipt.save({ session });
 
-    // Save to GoodsReceipts collection for history tracking
-    const GoodsReceipts = await getGoodsReceiptsModel(req.companyId);
-    const goodsReceipt = new GoodsReceipts({
-      receiptDate: new Date(),
-      locationId,
-      locationName: location.name,
-      sapWarehouseCode,
-      supplier,
-      supplierCode,
-      notes,
-      items: items.map((item, idx) => {
-        const product = productMap[item.productId];
-        return {
-          productId: item.productId,
-          productName: product.name,
-          sapItemCode: product.sapItemCode,
-          lotNumber: item.lotNumber,
-          quantity: item.quantity,
-          expiryDate: new Date(item.expiryDate),
-          loteId: createdLotes[idx]._id,
-          transactionId: transactions[idx]._id
-        };
-      }),
-      sapIntegration: {
-        pushed: sapResult?.success || false,
-        docEntry: sapResult?.sapDocEntry,
-        docNum: sapResult?.sapDocNum,
-        docType: sapResult?.sapDocType || 'PurchaseDeliveryNotes',
-        error: sapResult?.success ? undefined : (sapResult?.error || 'Unknown error'),
-        syncDate: new Date(),
-        retryCount: 0
-      },
-      createdBy: {
-        _id: req.user._id,
-        firstname: req.user.firstname,
-        lastname: req.user.lastname
+      // Commit transaction
+      await session.commitTransaction();
+
+      res.status(201).json({
+        success: true,
+        message: 'Goods receipt created successfully',
+        receiptId: goodsReceipt._id,
+        lotes: createdLotes,
+        transactions,
+        sapResult: pushToSap ? sapResult : null
+      });
+
+    } catch (localError) {
+      // Local save failed after SAP succeeded
+      // This is a critical error - SAP has the document but local doesn't
+      await session.abortTransaction();
+      console.error('CRITICAL: SAP succeeded but local save failed:', localError);
+      if (sapResult) {
+        console.error('SAP Document created:', sapResult);
       }
-    });
-    await goodsReceipt.save();
 
-    res.status(201).json({
-      success: true,
-      message: 'Goods receipt created successfully',
-      receiptId: goodsReceipt._id,
-      lotes: createdLotes,
-      transactions,
-      sapResult
-    });
+      return res.status(500).json({
+        success: false,
+        error: 'Error guardando localmente después de crear documento SAP. Contacte soporte.',
+        sapResult,
+        localError: localError.message,
+        requiresManualReconciliation: !!sapResult,
+      });
+    } finally {
+      session.endSession();
+    }
 
   } catch (error) {
     console.error('Error in goods receipt:', error);

@@ -1,7 +1,11 @@
 /**
  * Consumption Controller
  * Handles consumption recording at Centros with SAP DeliveryNote integration
+ *
+ * IMPORTANT: SAP sync is atomic - if SAP fails, nothing is saved locally.
+ * This ensures data consistency between local DB and SAP.
  */
+const mongoose = require('mongoose');
 const { validationResult } = require('express-validator');
 const {
   getConsumosModel,
@@ -192,6 +196,9 @@ exports.extractFromDocument = async (req, res, next) => {
 /**
  * POST /api/consumption
  * Create consumption record with SAP DeliveryNote
+ *
+ * ATOMIC: SAP is called FIRST. If SAP fails, nothing is saved locally.
+ * If SAP succeeds, local changes are committed in a transaction.
  */
 exports.create = async (req, res, next) => {
   try {
@@ -210,6 +217,10 @@ exports.create = async (req, res, next) => {
       notes,
     } = req.body;
 
+    // ============================================
+    // PHASE 1: VALIDATION (no saves)
+    // ============================================
+
     // Validate Centro
     const Locaciones = await getLocacionesModel(req.companyId);
     const centro = await Locaciones.findById(centroId).lean();
@@ -224,14 +235,13 @@ exports.create = async (req, res, next) => {
       });
     }
 
-    // Validate items and get lot details
+    // Validate items and prepare data (NO SAVES YET)
     const Lotes = await getLotesModel(req.companyId);
     const Productos = await getProductosModel(req.companyId);
-    const consumoItems = [];
-    const sapItems = [];
+    const validatedItems = [];
 
     for (const item of items) {
-      const lote = await Lotes.findById(item.loteId);
+      const lote = await Lotes.findById(item.loteId).lean();
       if (!lote) {
         return res.status(400).json({ error: `Lote ${item.loteId} no encontrado` });
       }
@@ -248,45 +258,21 @@ exports.create = async (req, res, next) => {
 
       const product = await Productos.findById(item.productId || lote.productId).lean();
 
-      consumoItems.push({
-        productId: product._id,
-        sapItemCode: product.sapItemCode,
-        productName: product.name,
-        loteId: lote._id,
-        lotNumber: lote.lotNumber,
+      validatedItems.push({
+        lote,
+        product,
         quantity: item.quantity,
-        price: product.price || null,
-        currency: product.currency || 'USD',
       });
-
-      sapItems.push({
-        itemCode: product.sapItemCode,
-        quantity: item.quantity,
-        batchNumber: lote.lotNumber,
-        price: product.price,
-        currency: product.currency || 'USD',
-      });
-
-      // Update lot quantity
-      lote.quantityAvailable -= item.quantity;
-      lote.quantityConsumed += item.quantity;
-      lote.historia.push({
-        fecha: new Date(),
-        user: {
-          _id: req.user._id,
-          firstname: req.user.firstname,
-          lastname: req.user.lastname,
-        },
-        accion: 'Consumo registrado',
-        detalles: `Cantidad: ${item.quantity}, Centro: ${centro.name}`,
-      });
-
-      if (lote.quantityAvailable === 0) {
-        lote.status = 'DEPLETED';
-      }
-
-      await lote.save();
     }
+
+    // Prepare SAP items
+    const sapItems = validatedItems.map(({ product, lote, quantity }) => ({
+      itemCode: product.sapItemCode,
+      quantity: quantity,
+      batchNumber: lote.lotNumber,
+      price: product.price,
+      currency: product.currency || 'USD',
+    }));
 
     // Build comments for SAP
     const commentParts = [];
@@ -297,8 +283,11 @@ exports.create = async (req, res, next) => {
     commentParts.push(`Consignación: ${centro.name}`);
     const sapComments = commentParts.join('\n');
 
-    // Create SAP DeliveryNote
-    let sapResult = { success: false, error: null };
+    // ============================================
+    // PHASE 2: SAP CALL (before any local saves)
+    // ============================================
+
+    let sapResult;
     try {
       const deliveryResult = await sapService.createDeliveryNote({
         cardCode: centro.sapIntegration.cardCode,
@@ -317,72 +306,144 @@ exports.create = async (req, res, next) => {
         sapDocType: 'DeliveryNotes',
       };
     } catch (sapError) {
+      // SAP failed - return error, save nothing locally
       console.error('SAP DeliveryNote creation failed:', sapError);
-      sapResult = {
+      return res.status(500).json({
         success: false,
-        error: sapError.message,
-      };
+        error: `SAP Error: ${sapError.message}`,
+        sapError: sapError.message,
+      });
     }
 
-    // Create Consumo record
-    const Consumos = await getConsumosModel(req.companyId);
-    const consumo = new Consumos({
-      centroId: centro._id,
-      centroName: centro.name,
-      sapCardCode: centro.sapIntegration.cardCode,
-      items: consumoItems,
-      patientName,
-      doctorName,
-      procedureDate: procedureDate ? new Date(procedureDate) : null,
-      procedureType,
-      sapSync: {
-        pushed: sapResult.success,
-        sapDocEntry: sapResult.sapDocEntry,
-        sapDocNum: sapResult.sapDocNum,
-        sapDocType: sapResult.sapDocType || 'DeliveryNotes',
-        pushedAt: sapResult.success ? new Date() : null,
-        error: sapResult.error,
-      },
-      notes,
-      status: sapResult.success ? 'SYNCED' : 'FAILED',
-      createdBy: {
-        _id: req.user._id,
-        firstname: req.user.firstname,
-        lastname: req.user.lastname,
-        email: req.user.email,
-      },
-    });
+    // ============================================
+    // PHASE 3: LOCAL SAVES (in transaction)
+    // SAP succeeded, now commit local changes
+    // ============================================
 
-    await consumo.save();
+    const session = await mongoose.startSession();
+    session.startTransaction();
 
-    // Update inventario aggregates
-    const Inventario = await getInventarioModel(req.companyId);
-    for (const item of consumoItems) {
-      await Inventario.findOneAndUpdate(
-        { productId: item.productId, locationId: centroId },
-        {
+    try {
+      // Prepare consumo items
+      const consumoItems = validatedItems.map(({ product, lote, quantity }) => ({
+        productId: product._id,
+        sapItemCode: product.sapItemCode,
+        productName: product.name,
+        loteId: lote._id,
+        lotNumber: lote.lotNumber,
+        quantity: quantity,
+        price: product.price || null,
+        currency: product.currency || 'USD',
+      }));
+
+      // Update lot quantities
+      for (const { lote, quantity } of validatedItems) {
+        const newQuantity = lote.quantityAvailable - quantity;
+        const updateData = {
           $inc: {
-            quantityAvailable: -item.quantity,
-            quantityConsumed: item.quantity,
+            quantityAvailable: -quantity,
+            quantityConsumed: quantity,
           },
-          $set: { lastMovementDate: new Date() },
-        },
-        { upsert: false }
-      );
-    }
+          $push: {
+            historia: {
+              fecha: new Date(),
+              user: {
+                _id: req.user._id,
+                firstname: req.user.firstname,
+                lastname: req.user.lastname,
+              },
+              accion: 'Consumo registrado',
+              detalles: `Cantidad: ${quantity}, Centro: ${centro.name}, SAP Doc: ${sapResult.sapDocNum}`,
+            },
+          },
+        };
 
-    res.status(201).json({
-      success: true,
-      consumo: {
-        _id: consumo._id,
-        centroName: consumo.centroName,
-        totalItems: consumo.totalItems,
-        totalQuantity: consumo.totalQuantity,
-        totalValue: consumo.totalValue,
-        status: consumo.status,
-      },
-      sapResult,
-    });
+        if (newQuantity === 0) {
+          updateData.$set = { status: 'DEPLETED' };
+        }
+
+        await Lotes.findByIdAndUpdate(lote._id, updateData, { session });
+      }
+
+      // Create Consumo record
+      const Consumos = await getConsumosModel(req.companyId);
+      const consumo = new Consumos({
+        centroId: centro._id,
+        centroName: centro.name,
+        sapCardCode: centro.sapIntegration.cardCode,
+        items: consumoItems,
+        patientName,
+        doctorName,
+        procedureDate: procedureDate ? new Date(procedureDate) : null,
+        procedureType,
+        sapSync: {
+          pushed: true,
+          sapDocEntry: sapResult.sapDocEntry,
+          sapDocNum: sapResult.sapDocNum,
+          sapDocType: 'DeliveryNotes',
+          pushedAt: new Date(),
+          error: null,
+        },
+        notes,
+        status: 'SYNCED',
+        createdBy: {
+          _id: req.user._id,
+          firstname: req.user.firstname,
+          lastname: req.user.lastname,
+          email: req.user.email,
+        },
+      });
+
+      await consumo.save({ session });
+
+      // Update inventario aggregates
+      const Inventario = await getInventarioModel(req.companyId);
+      for (const item of consumoItems) {
+        await Inventario.findOneAndUpdate(
+          { productId: item.productId, locationId: centroId },
+          {
+            $inc: {
+              quantityAvailable: -item.quantity,
+              quantityConsumed: item.quantity,
+            },
+            $set: { lastMovementDate: new Date() },
+          },
+          { upsert: false, session }
+        );
+      }
+
+      // Commit transaction
+      await session.commitTransaction();
+
+      res.status(201).json({
+        success: true,
+        consumo: {
+          _id: consumo._id,
+          centroName: consumo.centroName,
+          totalItems: consumo.totalItems,
+          totalQuantity: consumo.totalQuantity,
+          totalValue: consumo.totalValue,
+          status: consumo.status,
+        },
+        sapResult,
+      });
+    } catch (localError) {
+      // Local save failed after SAP succeeded
+      // This is a critical error - SAP has the document but local doesn't
+      await session.abortTransaction();
+      console.error('CRITICAL: SAP succeeded but local save failed:', localError);
+      console.error('SAP Document created:', sapResult);
+
+      return res.status(500).json({
+        success: false,
+        error: 'Error guardando localmente después de crear documento SAP. Contacte soporte.',
+        sapResult,
+        localError: localError.message,
+        requiresManualReconciliation: true,
+      });
+    } finally {
+      session.endSession();
+    }
   } catch (error) {
     console.error('Error creating consumption:', error);
     next(error);
