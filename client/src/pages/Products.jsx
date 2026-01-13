@@ -301,9 +301,10 @@ export default function Products() {
                   <div className="flex justify-between">
                     <span className="text-muted-foreground">Tamaño:</span>
                     <span className="font-medium">
-                      {product.specifications?.diameter && product.specifications?.length
-                        ? `${product.specifications.diameter}/${product.specifications.length}`
-                        : product.specifications?.size}
+                      {product.specifications?.size ||
+                        (product.specifications?.diameter && product.specifications?.length
+                          ? `${Number(product.specifications.diameter).toFixed(1)}/${product.specifications.length}`
+                          : null)}
                     </span>
                   </div>
                 )}

@@ -414,6 +414,7 @@ export default function Planning() {
                   <SelectItem value="all">Todas</SelectItem>
                   <SelectItem value="GUIAS">Guías</SelectItem>
                   <SelectItem value="STENTS_CORONARIOS">Stents Coronarios</SelectItem>
+                  <SelectItem value="STENTS_RECUBIERTOS">Stents Recubiertos</SelectItem>
                 </SelectContent>
               </Select>
             </div>
