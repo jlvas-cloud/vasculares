@@ -71,16 +71,17 @@ const goodsReceiptSchema = new Schema({
     },
   }],
 
-  // SAP Integration (single status for whole receipt)
+  // SAP Integration (standardized field names)
   sapIntegration: {
     pushed: {
       type: Boolean,
       default: false,
     },
-    retrying: {
-      type: Boolean,
-      default: false,
-      description: 'Lock flag to prevent concurrent retries',
+    status: {
+      type: String,
+      enum: ['PENDING', 'SYNCED', 'FAILED', 'RETRYING'],
+      default: 'PENDING',
+      description: 'SAP sync status',
     },
     docEntry: {
       type: Number,
@@ -94,18 +95,23 @@ const goodsReceiptSchema = new Schema({
       type: String,
       default: 'PurchaseDeliveryNotes',
     },
-    error: {
-      type: String,
-      description: 'Error message if SAP push failed',
-    },
     syncDate: {
       type: Date,
       description: 'When SAP sync was last attempted',
+    },
+    error: {
+      type: String,
+      description: 'Error message if SAP sync failed',
     },
     retryCount: {
       type: Number,
       default: 0,
       description: 'Number of retry attempts',
+    },
+    retrying: {
+      type: Boolean,
+      default: false,
+      description: 'Lock flag to prevent concurrent retries',
     },
   },
 
@@ -120,6 +126,7 @@ const goodsReceiptSchema = new Schema({
 // Indexes
 goodsReceiptSchema.index({ receiptDate: -1 });
 goodsReceiptSchema.index({ 'sapIntegration.pushed': 1 });
+goodsReceiptSchema.index({ 'sapIntegration.status': 1 });
 goodsReceiptSchema.index({ 'sapIntegration.docNum': 1 });
 goodsReceiptSchema.index({ supplierCode: 1 });
 goodsReceiptSchema.index({ locationId: 1 });

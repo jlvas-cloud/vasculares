@@ -59,26 +59,48 @@ const consignacionSchema = new Schema({
     },
   }],
 
-  // SAP Business One Integration
-  sapDocNum: {
-    type: Number,
-    sparse: true,
-    description: 'SAP Stock Transfer document number',
-  },
-  sapTransferStatus: {
-    type: String,
-    enum: [null, 'CREATED', 'FAILED', 'RETRYING'],  // null = pre-confirmation, transfer not yet attempted
-    default: null,
-    description: 'Status of SAP stock transfer creation',
-  },
-  sapError: {
-    type: String,
-    description: 'Error message if SAP transfer failed',
-  },
-  sapRetryCount: {
-    type: Number,
-    default: 0,
-    description: 'Number of SAP sync retry attempts',
+  // SAP Integration (standardized field names)
+  sapIntegration: {
+    pushed: {
+      type: Boolean,
+      default: false,
+    },
+    status: {
+      type: String,
+      enum: [null, 'PENDING', 'SYNCED', 'FAILED', 'RETRYING'],  // null = pre-confirmation
+      default: null,
+      description: 'SAP sync status',
+    },
+    docEntry: {
+      type: Number,
+      description: 'SAP Document Entry number',
+    },
+    docNum: {
+      type: Number,
+      description: 'SAP Document Number',
+    },
+    docType: {
+      type: String,
+      default: 'StockTransfers',
+    },
+    syncDate: {
+      type: Date,
+      description: 'When SAP sync was last attempted',
+    },
+    error: {
+      type: String,
+      description: 'Error message if SAP sync failed',
+    },
+    retryCount: {
+      type: Number,
+      default: 0,
+      description: 'Number of retry attempts',
+    },
+    retrying: {
+      type: Boolean,
+      default: false,
+      description: 'Lock flag to prevent concurrent retries',
+    },
   },
 
   // Creation tracking
@@ -112,8 +134,9 @@ consignacionSchema.index({ status: 1, createdAt: -1 });
 consignacionSchema.index({ fromLocationId: 1, createdAt: -1 });
 consignacionSchema.index({ toLocationId: 1, createdAt: -1 });
 consignacionSchema.index({ createdAt: -1 });
-consignacionSchema.index({ sapDocNum: 1 }, { sparse: true });
-consignacionSchema.index({ sapTransferStatus: 1 });  // For querying failed SAP transfers
+consignacionSchema.index({ 'sapIntegration.docNum': 1 }, { sparse: true });
+consignacionSchema.index({ 'sapIntegration.status': 1 });
+consignacionSchema.index({ 'sapIntegration.pushed': 1 });
 
 // Virtual to check if consignment is old (> 3 days in transit)
 consignacionSchema.virtual('isOld').get(function() {

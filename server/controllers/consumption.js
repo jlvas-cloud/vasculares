@@ -376,13 +376,15 @@ exports.create = async (req, res, next) => {
         doctorName,
         procedureDate: procedureDate ? new Date(procedureDate) : null,
         procedureType,
-        sapSync: {
+        sapIntegration: {
           pushed: true,
-          sapDocEntry: sapResult.sapDocEntry,
-          sapDocNum: sapResult.sapDocNum,
-          sapDocType: 'DeliveryNotes',
-          pushedAt: new Date(),
+          docEntry: sapResult.sapDocEntry,
+          docNum: sapResult.sapDocNum,
+          docType: 'DeliveryNotes',
+          syncDate: new Date(),
           error: null,
+          retryCount: 0,
+          retrying: false,
         },
         notes,
         status: 'SYNCED',
@@ -533,16 +535,16 @@ exports.retrySap = async (req, res, next) => {
     const consumo = await Consumos.findOneAndUpdate(
       {
         _id: id,
-        'sapSync.pushed': false,
+        'sapIntegration.pushed': false,
         status: { $ne: 'RETRYING' },
         $or: [
-          { 'sapSync.retryCount': { $exists: false } },
-          { 'sapSync.retryCount': { $lt: MAX_RETRIES } },
+          { 'sapIntegration.retryCount': { $exists: false } },
+          { 'sapIntegration.retryCount': { $lt: MAX_RETRIES } },
         ],
       },
       {
         $set: { status: 'RETRYING' },
-        $inc: { 'sapSync.retryCount': 1 },
+        $inc: { 'sapIntegration.retryCount': 1 },
       },
       { new: true }
     );
@@ -553,13 +555,13 @@ exports.retrySap = async (req, res, next) => {
       if (!existing) {
         return res.status(404).json({ error: 'Consumo no encontrado' });
       }
-      if (existing.sapSync?.pushed) {
+      if (existing.sapIntegration?.pushed) {
         return res.status(400).json({ error: 'Este consumo ya está sincronizado con SAP' });
       }
       if (existing.status === 'RETRYING') {
         return res.status(409).json({ error: 'Ya hay un reintento en progreso' });
       }
-      if ((existing.sapSync?.retryCount || 0) >= MAX_RETRIES) {
+      if ((existing.sapIntegration?.retryCount || 0) >= MAX_RETRIES) {
         return res.status(400).json({ error: `Se alcanzó el límite de ${MAX_RETRIES} reintentos` });
       }
       return res.status(400).json({ error: 'No se pudo iniciar el reintento' });
@@ -607,12 +609,12 @@ exports.retrySap = async (req, res, next) => {
       // Update with success
       await Consumos.findByIdAndUpdate(id, {
         $set: {
-          'sapSync.pushed': true,
-          'sapSync.sapDocEntry': deliveryResult.DocEntry,
-          'sapSync.sapDocNum': deliveryResult.DocNum,
-          'sapSync.sapDocType': 'DeliveryNotes',
-          'sapSync.pushedAt': new Date(),
-          'sapSync.error': null,
+          'sapIntegration.pushed': true,
+          'sapIntegration.docEntry': deliveryResult.DocEntry,
+          'sapIntegration.docNum': deliveryResult.DocNum,
+          'sapIntegration.docType': 'DeliveryNotes',
+          'sapIntegration.syncDate': new Date(),
+          'sapIntegration.error': null,
           status: 'SYNCED',
         },
       });
@@ -628,7 +630,7 @@ exports.retrySap = async (req, res, next) => {
       // Update with failure, release lock
       await Consumos.findByIdAndUpdate(id, {
         $set: {
-          'sapSync.error': sapError.message,
+          'sapIntegration.error': sapError.message,
           status: 'FAILED',
         },
       });

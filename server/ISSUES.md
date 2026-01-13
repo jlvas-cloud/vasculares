@@ -56,7 +56,7 @@
 
 ## MEDIUM PRIORITY ISSUES
 
-### 7. [ ] Inconsistent SAP Field Names Across Models
+### 7. [x] Inconsistent SAP Field Names Across Models
 **Location:** Multiple models
 **Details:**
 - `consumoModel` uses `sapSync.pushed`, `sapSync.sapDocEntry`
@@ -64,6 +64,7 @@
 - `consignacionModel` uses `sapDocNum`, `sapTransferStatus`
 - `transaccionModel` uses `sapIntegration.pushed`
 **Solution:** Standardize to single naming convention across all models.
+**Fixed:** 2026-01-12 - All models now use `sapIntegration` with consistent fields: pushed, status, docEntry, docNum, docType, syncDate, error, retryCount, retrying.
 
 ### 8. [x] No Request Timeouts in SAP Service
 **Location:** `services/sapService.js:47`
@@ -71,13 +72,14 @@
 **Solution:** Use AbortController with 30-second timeout.
 **Fixed:** 2026-01-12 - Added AbortController with 30-second timeout to all SAP requests.
 
-### 9. [ ] Inconsistent Status Enums
+### 9. [x] Inconsistent Status Enums
 **Location:** Multiple models
 **Details:**
 - `consumoModel.status`: ['PENDING', 'SYNCED', 'FAILED']
 - `consignacionModel.sapTransferStatus`: ['PENDING', 'CREATED', 'FAILED']
 - `goodsReceiptModel`: No status enum, only `pushed` boolean
 **Solution:** Standardize SAP sync status across all models.
+**Fixed:** 2026-01-12 - All models now use `sapIntegration.status` with values: PENDING, SYNCED, FAILED, RETRYING.
 
 ### 10. [x] Missing Database Indexes for SAP Queries
 **Location:** Multiple models
@@ -109,30 +111,34 @@
 **Risk:** All HTTPS connections in the app are vulnerable to MITM attacks.
 **Solution:** Use https.Agent with proper CA only for SAP requests.
 
-### 14. [ ] SAP Credentials Exported
+### 14. [x] SAP Credentials Exported
 **Location:** `services/sapService.js:374`
 **Risk:** SAP_CONFIG with credentials accessible from outside the service.
 **Solution:** Don't export SAP_CONFIG, only export functions.
+**Fixed:** 2026-01-12 - Replaced SAP_CONFIG export with getServiceUrl() function.
 
-### 15. [ ] Toast Auto-Dismisses Errors Too Quickly
+### 15. [x] Toast Auto-Dismisses Errors Too Quickly
 **Location:** `client/src/components/ui/toast.jsx`
 **Risk:** SAP errors dismissed after 5 seconds, users might miss them.
 **Solution:** Increase error toast duration to 10 seconds.
+**Fixed:** 2026-01-12 - Error and warning toasts now use 10 second duration.
 
-### 16. [ ] Debug Logging Exposes Sensitive Data
+### 16. [x] Debug Logging Exposes Sensitive Data
 **Location:** `services/sapService.js:164, 345`
 **Risk:** Full payloads with prices logged to stdout.
 **Solution:** Only log in debug mode, redact sensitive fields.
+**Fixed:** 2026-01-12 - Payload logging now conditional on DEBUG_SAP=true env var.
 
 ### 17. [ ] No Connection Pooling for SAP
 **Location:** `services/sapService.js`
 **Risk:** Each request creates new TCP connection.
 **Solution:** Create module-level https.Agent with keepAlive.
 
-### 18. [ ] Session Duration Hardcoded
+### 18. [x] Session Duration Hardcoded
 **Location:** `services/sapService.js:22`
 **Risk:** Can't adjust without redeploying.
 **Solution:** Move to environment variable.
+**Fixed:** 2026-01-12 - Now uses SAP_SESSION_DURATION_MS env var with 25min default.
 
 ---
 
@@ -161,6 +167,6 @@ Log errors to monitoring service for visibility.
 |----------|-------|------|-----------|
 | Critical | 3 | 3 | 0 |
 | High | 3 | 3 | 0 |
-| Medium | 6 | 4 | 2 |
-| Low | 6 | 0 | 6 |
-| **Total** | **18** | **10** | **8** |
+| Medium | 6 | 6 | 0 |
+| Low | 6 | 4 | 2 |
+| **Total** | **18** | **16** | **2** |

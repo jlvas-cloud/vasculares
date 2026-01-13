@@ -317,9 +317,17 @@ exports.create = async (req, res, next) => {
           quantityReceived: null,
           notes: item.notes || '',
         })),
-        sapDocNum: sapResult?.DocNum || null,
-        sapTransferStatus: sapEnabled ? 'CREATED' : null,
-        sapError: null,
+        sapIntegration: {
+          pushed: sapEnabled && sapResult?.DocNum ? true : false,
+          status: sapEnabled ? 'SYNCED' : null,
+          docEntry: sapResult?.DocEntry || null,
+          docNum: sapResult?.DocNum || null,
+          docType: 'StockTransfers',
+          syncDate: sapEnabled ? new Date() : null,
+          error: null,
+          retryCount: 0,
+          retrying: false,
+        },
         createdBy: {
           _id: req.user._id,
           firstname: req.user.firstname,
@@ -775,15 +783,15 @@ exports.retrySap = async (req, res, next) => {
     const consignacion = await Consignaciones.findOneAndUpdate(
       {
         _id: req.params.id,
-        sapTransferStatus: { $nin: ['CREATED', 'RETRYING'] },
+        'sapIntegration.status': { $nin: ['SYNCED', 'RETRYING'] },
         $or: [
-          { sapRetryCount: { $exists: false } },
-          { sapRetryCount: { $lt: MAX_RETRIES } },
+          { 'sapIntegration.retryCount': { $exists: false } },
+          { 'sapIntegration.retryCount': { $lt: MAX_RETRIES } },
         ],
       },
       {
-        $set: { sapTransferStatus: 'RETRYING' },
-        $inc: { sapRetryCount: 1 },
+        $set: { 'sapIntegration.status': 'RETRYING', 'sapIntegration.retrying': true },
+        $inc: { 'sapIntegration.retryCount': 1 },
       },
       { new: true }
     );
@@ -794,13 +802,13 @@ exports.retrySap = async (req, res, next) => {
       if (!existing) {
         return res.status(404).json({ error: 'Consignación no encontrada' });
       }
-      if (existing.sapTransferStatus === 'CREATED') {
+      if (existing.sapIntegration?.status === 'SYNCED') {
         return res.status(400).json({ error: 'Esta consignación ya está sincronizada con SAP' });
       }
-      if (existing.sapTransferStatus === 'RETRYING') {
+      if (existing.sapIntegration?.status === 'RETRYING') {
         return res.status(409).json({ error: 'Ya hay un reintento en progreso' });
       }
-      if ((existing.sapRetryCount || 0) >= MAX_RETRIES) {
+      if ((existing.sapIntegration?.retryCount || 0) >= MAX_RETRIES) {
         return res.status(400).json({ error: `Se alcanzó el límite de ${MAX_RETRIES} reintentos` });
       }
       return res.status(400).json({ error: 'No se pudo iniciar el reintento' });
@@ -813,7 +821,7 @@ exports.retrySap = async (req, res, next) => {
     if (!fromLocation?.sapIntegration?.warehouseCode || !toLocation?.sapIntegration?.warehouseCode) {
       // Release lock
       await Consignaciones.findByIdAndUpdate(req.params.id, {
-        $set: { sapTransferStatus: 'FAILED' }
+        $set: { 'sapIntegration.status': 'FAILED', 'sapIntegration.retrying': false }
       });
       return res.status(400).json({ error: 'Configuración SAP incompleta para las locaciones' });
     }
@@ -834,7 +842,7 @@ exports.retrySap = async (req, res, next) => {
     if (sapTransferItems.length === 0) {
       // Release lock
       await Consignaciones.findByIdAndUpdate(req.params.id, {
-        $set: { sapTransferStatus: 'FAILED', sapError: 'No hay productos con código SAP' }
+        $set: { 'sapIntegration.status': 'FAILED', 'sapIntegration.error': 'No hay productos con código SAP', 'sapIntegration.retrying': false }
       });
       return res.status(400).json({ error: 'No hay productos con código SAP para transferir' });
     }
@@ -852,9 +860,13 @@ exports.retrySap = async (req, res, next) => {
       // Update with success
       await Consignaciones.findByIdAndUpdate(req.params.id, {
         $set: {
-          sapDocNum: sapResult.DocNum,
-          sapTransferStatus: 'CREATED',
-          sapError: null,
+          'sapIntegration.pushed': true,
+          'sapIntegration.status': 'SYNCED',
+          'sapIntegration.docEntry': sapResult.DocEntry,
+          'sapIntegration.docNum': sapResult.DocNum,
+          'sapIntegration.syncDate': new Date(),
+          'sapIntegration.error': null,
+          'sapIntegration.retrying': false,
         }
       });
 
@@ -867,8 +879,9 @@ exports.retrySap = async (req, res, next) => {
       // Update with failure, release lock
       await Consignaciones.findByIdAndUpdate(req.params.id, {
         $set: {
-          sapTransferStatus: 'FAILED',
-          sapError: sapError.message,
+          'sapIntegration.status': 'FAILED',
+          'sapIntegration.error': sapError.message,
+          'sapIntegration.retrying': false,
         }
       });
 

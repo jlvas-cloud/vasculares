@@ -55,24 +55,41 @@ const consumoSchema = new Schema({
   procedureDate: Date,
   procedureType: String,
 
-  // SAP Integration
-  sapSync: {
+  // SAP Integration (standardized field names)
+  sapIntegration: {
     pushed: {
       type: Boolean,
       default: false,
     },
-    sapDocEntry: Number,
-    sapDocNum: Number,
-    sapDocType: {
+    docEntry: {
+      type: Number,
+      description: 'SAP Document Entry number',
+    },
+    docNum: {
+      type: Number,
+      description: 'SAP Document Number',
+    },
+    docType: {
       type: String,
       default: 'DeliveryNotes',
     },
-    pushedAt: Date,
-    error: String,
+    syncDate: {
+      type: Date,
+      description: 'When SAP sync was last attempted',
+    },
+    error: {
+      type: String,
+      description: 'Error message if SAP sync failed',
+    },
     retryCount: {
       type: Number,
       default: 0,
-      description: 'Number of SAP sync retry attempts',
+      description: 'Number of retry attempts',
+    },
+    retrying: {
+      type: Boolean,
+      default: false,
+      description: 'Lock flag to prevent concurrent retries',
     },
   },
 
@@ -108,8 +125,8 @@ const consumoSchema = new Schema({
 
 // Indexes
 consumoSchema.index({ centroId: 1, createdAt: -1 });
-consumoSchema.index({ 'sapSync.sapDocNum': 1 }, { sparse: true });
-consumoSchema.index({ 'sapSync.pushed': 1 });  // For querying failed SAP syncs
+consumoSchema.index({ 'sapIntegration.docNum': 1 }, { sparse: true });
+consumoSchema.index({ 'sapIntegration.pushed': 1 });
 consumoSchema.index({ status: 1 });
 consumoSchema.index({ createdAt: -1 });
 

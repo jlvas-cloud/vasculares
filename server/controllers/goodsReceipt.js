@@ -331,16 +331,21 @@ exports.createGoodsReceipt = async (req, res, next) => {
         }),
         sapIntegration: pushToSap ? {
           pushed: true,
+          status: 'SYNCED',
           docEntry: sapResult.sapDocEntry,
           docNum: sapResult.sapDocNum,
           docType: 'PurchaseDeliveryNotes',
           syncDate: new Date(),
-          retryCount: 0
+          error: null,
+          retryCount: 0,
+          retrying: false,
         } : {
           pushed: false,
+          status: 'PENDING',
           error: 'SAP sync disabled',
           syncDate: new Date(),
-          retryCount: 0
+          retryCount: 0,
+          retrying: false,
         },
         createdBy: {
           _id: req.user._id,
@@ -422,7 +427,7 @@ async function pushToSapGoodsReceipt({ items, productMap, sapWarehouseCode, supp
     DocumentLines: documentLines
   };
 
-  const response = await fetch(`${sapService.SAP_CONFIG.serviceUrl}/PurchaseDeliveryNotes`, {
+  const response = await fetch(`${sapService.getServiceUrl()}/PurchaseDeliveryNotes`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -665,6 +670,7 @@ exports.retrySapPush = async (req, res, next) => {
     // Update receipt with SAP result and release lock
     const updateData = {
       'sapIntegration.pushed': sapResult?.success || false,
+      'sapIntegration.status': sapResult?.success ? 'SYNCED' : 'FAILED',
       'sapIntegration.retrying': false,
       'sapIntegration.syncDate': new Date(),
     };

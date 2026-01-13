@@ -24,13 +24,16 @@ const SAP_CONFIG = {
 // Session management
 let sessionId = null;
 let sessionExpiry = null;
-const SESSION_DURATION_MS = 25 * 60 * 1000; // 25 minutes (SAP default is 30)
+const SESSION_DURATION_MS = parseInt(process.env.SAP_SESSION_DURATION_MS) || 25 * 60 * 1000; // Default 25 min (SAP default is 30)
 
 // Login mutex - prevents concurrent login race conditions
 let loginPromise = null;
 
 // Request timeout in milliseconds
 const REQUEST_TIMEOUT_MS = 30000; // 30 seconds
+
+// Debug mode - only log sensitive data when explicitly enabled
+const DEBUG_SAP = process.env.DEBUG_SAP === 'true';
 
 /**
  * Sanitize string for use in OData filter expressions
@@ -249,7 +252,9 @@ async function createStockTransfer({ fromWarehouse, toWarehouse, toBinAbsEntry, 
     StockTransferLines: stockTransferLines,
   };
 
-  console.log('Creating SAP Stock Transfer:', JSON.stringify(transferPayload, null, 2));
+  if (DEBUG_SAP) {
+    console.log('Creating SAP Stock Transfer:', JSON.stringify(transferPayload, null, 2));
+  }
 
   const response = await sapRequest('POST', '/StockTransfers', transferPayload);
 
@@ -447,7 +452,9 @@ async function createDeliveryNote({ cardCode, cardName, warehouseCode, binAbsEnt
     DocumentLines: documentLines,
   };
 
-  console.log('Creating SAP Delivery Note:', JSON.stringify(deliveryPayload, null, 2));
+  if (DEBUG_SAP) {
+    console.log('Creating SAP Delivery Note:', JSON.stringify(deliveryPayload, null, 2));
+  }
 
   const response = await sapRequest('POST', '/DeliveryNotes', deliveryPayload);
 
@@ -466,6 +473,14 @@ async function createDeliveryNote({ cardCode, cardName, warehouseCode, binAbsEnt
   };
 }
 
+/**
+ * Get SAP Service Layer base URL
+ * Exposes only the URL, not credentials
+ */
+function getServiceUrl() {
+  return SAP_CONFIG.serviceUrl;
+}
+
 module.exports = {
   login,
   logout,
@@ -476,5 +491,5 @@ module.exports = {
   verifyConnection,
   getCustomers,
   createDeliveryNote,
-  SAP_CONFIG,
+  getServiceUrl,
 };

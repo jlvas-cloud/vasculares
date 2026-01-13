@@ -28,7 +28,7 @@ exports.getWarehouses = async (req, res, next) => {
     await sapService.ensureSession();
 
     const response = await fetch(
-      `${sapService.SAP_CONFIG.serviceUrl}/Warehouses?$select=WarehouseCode,WarehouseName`,
+      `${sapService.getServiceUrl()}/Warehouses?$select=WarehouseCode,WarehouseName`,
       {
         headers: {
           'Content-Type': 'application/json',
@@ -59,7 +59,7 @@ exports.getBinLocations = async (req, res, next) => {
     const { warehouse } = req.query;
     await sapService.ensureSession();
 
-    let url = `${sapService.SAP_CONFIG.serviceUrl}/BinLocations?$select=AbsEntry,BinCode,Warehouse`;
+    let url = `${sapService.getServiceUrl()}/BinLocations?$select=AbsEntry,BinCode,Warehouse`;
     if (warehouse) {
       url += `&$filter=Warehouse eq '${warehouse}'`;
     }
@@ -124,7 +124,7 @@ exports.getItems = async (req, res, next) => {
     const { search, top = 20 } = req.query;
     await sapService.ensureSession();
 
-    let url = `${sapService.SAP_CONFIG.serviceUrl}/Items?$top=${top}&$select=ItemCode,ItemName,ManageBatchNumbers`;
+    let url = `${sapService.getServiceUrl()}/Items?$top=${top}&$select=ItemCode,ItemName,ManageBatchNumbers`;
 
     if (search) {
       url += `&$filter=contains(ItemName,'${search}') or contains(ItemCode,'${search}')`;
@@ -270,7 +270,7 @@ exports.getSuppliers = async (req, res, next) => {
     const { search } = req.query;
     await sapService.ensureSession();
 
-    let url = `${sapService.SAP_CONFIG.serviceUrl}/BusinessPartners?$top=50`;
+    let url = `${sapService.getServiceUrl()}/BusinessPartners?$top=50`;
     url += `&$select=CardCode,CardName,CardType`;
     url += `&$filter=CardType eq 'cSupplier'`;
 

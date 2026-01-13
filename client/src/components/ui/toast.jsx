@@ -4,6 +4,7 @@ import { X, CheckCircle, AlertCircle, AlertTriangle, Info } from 'lucide-react';
 const ToastContext = createContext(null);
 
 const TOAST_DURATION = 5000;
+const ERROR_TOAST_DURATION = 10000;  // Errors stay longer so users can read them
 
 const toastIcons = {
   success: CheckCircle,
@@ -48,8 +49,8 @@ export function ToastProvider({ children }) {
 
   const toast = {
     success: (message, duration) => addToast(message, 'success', duration),
-    error: (message, duration) => addToast(message, 'error', duration),
-    warning: (message, duration) => addToast(message, 'warning', duration),
+    error: (message, duration) => addToast(message, 'error', duration ?? ERROR_TOAST_DURATION),
+    warning: (message, duration) => addToast(message, 'warning', duration ?? ERROR_TOAST_DURATION),
     info: (message, duration) => addToast(message, 'info', duration),
   };
 
