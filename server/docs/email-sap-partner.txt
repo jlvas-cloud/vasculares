@@ -1,0 +1,42 @@
+Asunto: Solicitud - Habilitar SQLQueries para tabla OIBT en SAP B1 Service Layer
+
+Estimado equipo de soporte SAP,
+
+Necesitamos su apoyo para habilitar una funcionalidad en nuestro Service Layer de SAP Business One.
+
+SOLICITUD:
+Permitir consultar la tabla OIBT (inventario de lotes por almacén/ubicación) vía Service Layer.
+
+NOTA: Nuestro SAP B1 usa Microsoft SQL Server (no HANA), por lo que el Semantic Layer (sml.svc) no está disponible. Necesitamos usar el endpoint SQLQueries con AllowList.
+
+CONTEXTO:
+Estamos desarrollando una integración para gestión de inventario de dispositivos médicos. Actualmente podemos crear documentos en SAP (transferencias, entregas), pero no podemos consultar el inventario de lotes por ubicación (bin location).
+
+DATOS DEL SISTEMA:
+- Servidor: https://94.74.64.47:50000/b1s/v1
+- Base de datos: HOSPAL_ENERO
+- Usuario: Profes02 (Superusuario)
+
+OPCIONES DE CONFIGURACIÓN:
+
+Opción 1 - Agregar tablas al AllowList:
+1. Editar archivo: C:\Program Files\SAP\SAP Business One ServerTools\ServiceLayer\conf\b1s.conf
+2. Agregar OIBT, OBTN a la sección AllowList
+3. Reiniciar Service Layer
+
+Opción 2 - Crear vista SQL:
+1. En SQL Server, crear vista terminada en "B1SLQuery" (ej: OIBT_InventoryB1SLQuery)
+2. Esta vista se expondrá automáticamente en SQLQueries
+
+QUERY QUE NECESITAMOS EJECUTAR:
+SELECT T0.ItemCode, T0.BatchNum, T0.WhsCode, T0.BinAbs, T0.Quantity, T1.ExpDate
+FROM OIBT T0
+INNER JOIN OBTN T1 ON T0.ItemCode = T1.ItemCode AND T0.BatchNum = T1.DistNumber
+WHERE T0.Quantity > 0
+
+Adjunto documento técnico con detalles completos de configuración.
+
+Quedamos atentos a su respuesta y disponibilidad para coordinar.
+
+Saludos cordiales,
+José Luis Vásquez

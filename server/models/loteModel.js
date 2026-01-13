@@ -112,10 +112,15 @@ const loteSchema = new Schema({
 }, { timestamps: true });
 
 // Indexes
-loteSchema.index({ productId: 1, lotNumber: 1 });
+// Unique constraint: One lote record per (product, lotNumber, location)
+// Multiple shipments of same lot to same location UPDATE the single record's quantity
+// This prevents duplicate records from race conditions or bugs
+loteSchema.index({ productId: 1, lotNumber: 1, currentLocationId: 1 }, { unique: true });
 loteSchema.index({ currentLocationId: 1, status: 1 });
 loteSchema.index({ expiryDate: 1, status: 1 });
 loteSchema.index({ status: 1 });
+// Keep non-unique index for queries that don't filter by location
+loteSchema.index({ productId: 1, lotNumber: 1 });
 
 // Virtual: Is this lot expiring soon? (within 90 days)
 loteSchema.virtual('expiringSoon').get(function() {
