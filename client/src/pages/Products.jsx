@@ -286,7 +286,9 @@ export default function Products() {
                 <div className="flex justify-between">
                   <span className="text-muted-foreground">Categoría:</span>
                   <span className="font-medium">
-                    {product.category === 'GUIAS' ? 'Guías' : 'Stents Coronarios'}
+                    {product.category === 'GUIAS' ? 'Guías' :
+                     product.category === 'STENTS_RECUBIERTOS' ? 'Stents Recubiertos' :
+                     'Stents Coronarios'}
                   </span>
                 </div>
                 {product.subcategory && (

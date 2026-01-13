@@ -11,7 +11,7 @@ router.use(verifyUser, getCompanyId);
 const validateProductCreate = [
   body('name').trim().notEmpty().withMessage('Nombre es requerido'),
   body('code').isInt().withMessage('Código debe ser un número'),
-  body('category').isIn(['GUIAS', 'STENTS_CORONARIOS']).withMessage('Categoría inválida'),
+  body('category').isIn(['GUIAS', 'STENTS_CORONARIOS', 'STENTS_RECUBIERTOS']).withMessage('Categoría inválida'),
   body('specifications.diameter').optional().isFloat({ min: 0 }).withMessage('Diámetro debe ser un número positivo'),
   body('specifications.length').optional().isFloat({ min: 0 }).withMessage('Longitud debe ser un número positivo'),
 ];
@@ -20,7 +20,7 @@ const validateProductCreate = [
 const validateProductUpdate = [
   body('name').optional().trim().notEmpty().withMessage('Nombre no puede estar vacío'),
   body('code').optional().isInt().withMessage('Código debe ser un número'),
-  body('category').optional().isIn(['GUIAS', 'STENTS_CORONARIOS']).withMessage('Categoría inválida'),
+  body('category').optional().isIn(['GUIAS', 'STENTS_CORONARIOS', 'STENTS_RECUBIERTOS']).withMessage('Categoría inválida'),
   body('specifications.diameter').optional().isFloat({ min: 0 }).withMessage('Diámetro debe ser un número positivo'),
   body('specifications.length').optional().isFloat({ min: 0 }).withMessage('Longitud debe ser un número positivo'),
 ];

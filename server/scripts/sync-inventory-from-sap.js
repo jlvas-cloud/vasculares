@@ -192,7 +192,7 @@ async function main() {
     let locationBatchCount = 0;
 
     // Fetch all batch data for this location in one query
-    // Query both Orsiro Mission (419%) and legacy Orsiro (364%, 391%)
+    // Query: Orsiro Mission (419%), legacy Orsiro (364%, 391%), Papyrus (369%, 381%)
     let allBatchStock = [];
     try {
       if (binAbsEntry) {
@@ -200,20 +200,24 @@ async function main() {
         const mission = await sapSyncService.getBatchInventoryByBin('419%', binAbsEntry);
         const legacy364 = await sapSyncService.getBatchInventoryByBin('364%', binAbsEntry);
         const legacy391 = await sapSyncService.getBatchInventoryByBin('391%', binAbsEntry);
-        allBatchStock = [...mission, ...legacy364, ...legacy391];
+        const papyrus369 = await sapSyncService.getBatchInventoryByBin('369%', binAbsEntry);
+        const papyrus381 = await sapSyncService.getBatchInventoryByBin('381%', binAbsEntry);
+        allBatchStock = [...mission, ...legacy364, ...legacy391, ...papyrus369, ...papyrus381];
         if (VERBOSE) {
           console.log(`  Fetched ${allBatchStock.length} batch records from OBBQ (bin ${binAbsEntry})`);
-          console.log(`    - Mission (419%): ${mission.length}, Legacy (364%): ${legacy364.length}, Legacy (391%): ${legacy391.length}`);
+          console.log(`    - Orsiro Mission: ${mission.length}, Legacy: ${legacy364.length + legacy391.length}, Papyrus: ${papyrus369.length + papyrus381.length}`);
         }
       } else {
         // Main warehouse (no bins) - use OIBT
         const mission = await sapSyncService.getBatchInventoryFromOIBT('419%', warehouseCode);
         const legacy364 = await sapSyncService.getBatchInventoryFromOIBT('364%', warehouseCode);
         const legacy391 = await sapSyncService.getBatchInventoryFromOIBT('391%', warehouseCode);
-        allBatchStock = [...mission, ...legacy364, ...legacy391];
+        const papyrus369 = await sapSyncService.getBatchInventoryFromOIBT('369%', warehouseCode);
+        const papyrus381 = await sapSyncService.getBatchInventoryFromOIBT('381%', warehouseCode);
+        allBatchStock = [...mission, ...legacy364, ...legacy391, ...papyrus369, ...papyrus381];
         if (VERBOSE) {
           console.log(`  Fetched ${allBatchStock.length} batch records from OIBT (warehouse ${warehouseCode})`);
-          console.log(`    - Mission (419%): ${mission.length}, Legacy (364%): ${legacy364.length}, Legacy (391%): ${legacy391.length}`);
+          console.log(`    - Orsiro Mission: ${mission.length}, Legacy: ${legacy364.length + legacy391.length}, Papyrus: ${papyrus369.length + papyrus381.length}`);
         }
       }
     } catch (error) {

@@ -30,7 +30,7 @@ const productoSchema = new Schema({
   category: {
     type: String,
     required: true,
-    enum: ['GUIAS', 'STENTS_CORONARIOS'],
+    enum: ['GUIAS', 'STENTS_CORONARIOS', 'STENTS_RECUBIERTOS'],
   },
   subcategory: {
     type: String,

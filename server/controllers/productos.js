@@ -219,7 +219,8 @@ exports.getCategories = async (req, res, next) => {
   try {
     const categories = [
       { value: 'GUIAS', label: 'Guías' },
-      { value: 'STENTS_CORONARIOS', label: 'Stents Coronarios' }
+      { value: 'STENTS_CORONARIOS', label: 'Stents Coronarios' },
+      { value: 'STENTS_RECUBIERTOS', label: 'Stents Recubiertos' }
     ];
 
     res.json(categories);
