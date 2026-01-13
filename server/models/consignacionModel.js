@@ -67,7 +67,7 @@ const consignacionSchema = new Schema({
   },
   sapTransferStatus: {
     type: String,
-    enum: ['PENDING', 'CREATED', 'FAILED'],
+    enum: ['PENDING', 'CREATED', 'FAILED', 'RETRYING'],
     default: null,
     description: 'Status of SAP stock transfer creation',
   },

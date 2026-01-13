@@ -756,6 +756,11 @@ exports.confirm = async (req, res, next) => {
 /**
  * POST /api/consignaciones/:id/retry-sap
  * Retry SAP stock transfer for a failed consignment
+ *
+ * Uses optimistic locking to prevent duplicate SAP documents:
+ * 1. Atomically claim the retry by setting status to 'RETRYING'
+ * 2. If claim fails, another request is already processing
+ * 3. Call SAP and update with result
  */
 exports.retrySap = async (req, res, next) => {
   try {
@@ -763,28 +768,49 @@ exports.retrySap = async (req, res, next) => {
     const Locaciones = await getLocacionesModel(req.companyId);
     const Productos = await getProductosModel(req.companyId);
 
-    const consignacion = await Consignaciones.findById(req.params.id);
+    // Atomically claim the retry - only succeeds if not already synced or retrying
+    const consignacion = await Consignaciones.findOneAndUpdate(
+      {
+        _id: req.params.id,
+        sapTransferStatus: { $nin: ['CREATED', 'RETRYING'] },
+      },
+      {
+        $set: { sapTransferStatus: 'RETRYING' },
+      },
+      { new: true }
+    );
 
     if (!consignacion) {
-      return res.status(404).json({ error: 'Consignación no encontrada' });
-    }
-
-    if (consignacion.sapTransferStatus === 'CREATED') {
-      return res.status(400).json({ error: 'Esta consignación ya está sincronizada con SAP' });
+      // Check why we couldn't claim it
+      const existing = await Consignaciones.findById(req.params.id).lean();
+      if (!existing) {
+        return res.status(404).json({ error: 'Consignación no encontrada' });
+      }
+      if (existing.sapTransferStatus === 'CREATED') {
+        return res.status(400).json({ error: 'Esta consignación ya está sincronizada con SAP' });
+      }
+      if (existing.sapTransferStatus === 'RETRYING') {
+        return res.status(409).json({ error: 'Ya hay un reintento en progreso' });
+      }
+      return res.status(400).json({ error: 'No se pudo iniciar el reintento' });
     }
 
     // Get locations for SAP warehouse codes
-    const fromLocation = await Locaciones.findById(consignacion.fromLocationId);
-    const toLocation = await Locaciones.findById(consignacion.toLocationId);
+    const fromLocation = await Locaciones.findById(consignacion.fromLocationId).lean();
+    const toLocation = await Locaciones.findById(consignacion.toLocationId).lean();
 
     if (!fromLocation?.sapIntegration?.warehouseCode || !toLocation?.sapIntegration?.warehouseCode) {
+      // Release lock
+      await Consignaciones.findByIdAndUpdate(req.params.id, {
+        $set: { sapTransferStatus: 'FAILED' }
+      });
       return res.status(400).json({ error: 'Configuración SAP incompleta para las locaciones' });
     }
 
     // Build SAP transfer items
     const sapTransferItems = [];
     for (const item of consignacion.items) {
-      const product = await Productos.findById(item.productId);
+      const product = await Productos.findById(item.productId).lean();
       if (product?.sapItemCode) {
         sapTransferItems.push({
           itemCode: product.sapItemCode,
@@ -795,6 +821,10 @@ exports.retrySap = async (req, res, next) => {
     }
 
     if (sapTransferItems.length === 0) {
+      // Release lock
+      await Consignaciones.findByIdAndUpdate(req.params.id, {
+        $set: { sapTransferStatus: 'FAILED', sapError: 'No hay productos con código SAP' }
+      });
       return res.status(400).json({ error: 'No hay productos con código SAP para transferir' });
     }
 
@@ -808,10 +838,14 @@ exports.retrySap = async (req, res, next) => {
         comments: `Consignación Vasculares - ${toLocation.name} (Retry)`,
       });
 
-      consignacion.sapDocNum = sapResult.DocNum;
-      consignacion.sapTransferStatus = 'CREATED';
-      consignacion.sapError = null;
-      await consignacion.save();
+      // Update with success
+      await Consignaciones.findByIdAndUpdate(req.params.id, {
+        $set: {
+          sapDocNum: sapResult.DocNum,
+          sapTransferStatus: 'CREATED',
+          sapError: null,
+        }
+      });
 
       res.json({
         success: true,
@@ -819,8 +853,13 @@ exports.retrySap = async (req, res, next) => {
         sapDocEntry: sapResult.DocEntry,
       });
     } catch (sapError) {
-      consignacion.sapError = sapError.message;
-      await consignacion.save();
+      // Update with failure, release lock
+      await Consignaciones.findByIdAndUpdate(req.params.id, {
+        $set: {
+          sapTransferStatus: 'FAILED',
+          sapError: sapError.message,
+        }
+      });
 
       res.status(500).json({
         success: false,

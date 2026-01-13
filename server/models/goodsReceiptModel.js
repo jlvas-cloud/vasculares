@@ -77,6 +77,11 @@ const goodsReceiptSchema = new Schema({
       type: Boolean,
       default: false,
     },
+    retrying: {
+      type: Boolean,
+      default: false,
+      description: 'Lock flag to prevent concurrent retries',
+    },
     docEntry: {
       type: Number,
       description: 'SAP Document Entry number',

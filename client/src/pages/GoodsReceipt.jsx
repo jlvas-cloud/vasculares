@@ -686,11 +686,22 @@ export default function GoodsReceipt() {
         <DialogContent>
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
-              <CheckCircle2 className="h-5 w-5 text-green-600" />
-              Recepcion Creada Exitosamente
+              {receiptResult?.sapResult?.success ? (
+                <>
+                  <CheckCircle2 className="h-5 w-5 text-green-600" />
+                  Recepcion Creada Exitosamente
+                </>
+              ) : (
+                <>
+                  <AlertCircle className="h-5 w-5 text-orange-500" />
+                  Recepcion Creada con Errores
+                </>
+              )}
             </DialogTitle>
             <DialogDescription>
-              Los productos han sido registrados en el inventario
+              {receiptResult?.sapResult?.success
+                ? 'Los productos han sido registrados en el inventario y SAP'
+                : 'Los productos se guardaron localmente pero hubo un error con SAP'}
             </DialogDescription>
           </DialogHeader>
 

@@ -562,26 +562,54 @@ exports.getGoodsReceipt = async (req, res, next) => {
 /**
  * POST /api/goods-receipt/:id/retry-sap
  * Retry SAP push for a failed goods receipt
+ *
+ * Uses optimistic locking to prevent duplicate SAP documents:
+ * 1. Atomically claim the retry by setting retrying flag
+ * 2. If claim fails, another request is already processing
+ * 3. Call SAP and update with result
  */
 exports.retrySapPush = async (req, res, next) => {
   try {
     const GoodsReceipts = await getGoodsReceiptsModel(req.companyId);
-    const receipt = await GoodsReceipts.findById(req.params.id);
+
+    // Atomically claim the retry - only succeeds if not already synced or retrying
+    const receipt = await GoodsReceipts.findOneAndUpdate(
+      {
+        _id: req.params.id,
+        'sapIntegration.pushed': { $ne: true },
+        'sapIntegration.retrying': { $ne: true },
+      },
+      {
+        $set: { 'sapIntegration.retrying': true },
+        $inc: { 'sapIntegration.retryCount': 1 },
+      },
+      { new: true }
+    );
 
     if (!receipt) {
-      return res.status(404).json({ error: 'Goods receipt not found' });
-    }
-
-    // Check if already synced
-    if (receipt.sapIntegration?.pushed) {
-      return res.status(400).json({
-        error: 'This receipt is already synced with SAP',
-        sapDocNum: receipt.sapIntegration.docNum
-      });
+      // Check why we couldn't claim it
+      const existing = await GoodsReceipts.findById(req.params.id).lean();
+      if (!existing) {
+        return res.status(404).json({ error: 'Goods receipt not found' });
+      }
+      if (existing.sapIntegration?.pushed) {
+        return res.status(400).json({
+          error: 'This receipt is already synced with SAP',
+          sapDocNum: existing.sapIntegration.docNum
+        });
+      }
+      if (existing.sapIntegration?.retrying) {
+        return res.status(409).json({ error: 'Ya hay un reintento en progreso' });
+      }
+      return res.status(400).json({ error: 'No se pudo iniciar el reintento' });
     }
 
     // Validate supplier code exists
     if (!receipt.supplierCode) {
+      // Release lock
+      await GoodsReceipts.findByIdAndUpdate(req.params.id, {
+        $set: { 'sapIntegration.retrying': false }
+      });
       return res.status(400).json({
         error: 'Supplier code is required for SAP integration'
       });
@@ -624,17 +652,27 @@ exports.retrySapPush = async (req, res, next) => {
       };
     }
 
-    // Update receipt with new SAP status
-    receipt.sapIntegration = {
-      pushed: sapResult?.success || false,
-      docEntry: sapResult?.sapDocEntry,
-      docNum: sapResult?.sapDocNum,
-      docType: sapResult?.sapDocType || 'PurchaseDeliveryNotes',
-      error: sapResult?.success ? undefined : (sapResult?.error || 'Unknown error'),
-      syncDate: new Date(),
-      retryCount: (receipt.sapIntegration?.retryCount || 0) + 1
+    // Update receipt with SAP result and release lock
+    const updateData = {
+      'sapIntegration.pushed': sapResult?.success || false,
+      'sapIntegration.retrying': false,
+      'sapIntegration.syncDate': new Date(),
     };
-    await receipt.save();
+
+    if (sapResult?.success) {
+      updateData['sapIntegration.docEntry'] = sapResult.sapDocEntry;
+      updateData['sapIntegration.docNum'] = sapResult.sapDocNum;
+      updateData['sapIntegration.docType'] = sapResult.sapDocType || 'PurchaseDeliveryNotes';
+      updateData['sapIntegration.error'] = null;
+    } else {
+      updateData['sapIntegration.error'] = sapResult?.error || 'Unknown error';
+    }
+
+    const updatedReceipt = await GoodsReceipts.findByIdAndUpdate(
+      req.params.id,
+      { $set: updateData },
+      { new: true }
+    );
 
     // If successful, also update the transactions
     if (sapResult?.success) {
@@ -661,7 +699,7 @@ exports.retrySapPush = async (req, res, next) => {
     res.json({
       success: sapResult?.success || false,
       message: sapResult?.success ? 'SAP sync successful' : 'SAP sync failed',
-      receipt: receipt.toObject(),
+      receipt: updatedReceipt.toObject(),
       sapResult
     });
 

@@ -8,7 +8,7 @@ const Schema = mongoose.Schema;
 const consumoItemSchema = new Schema({
   productId: {
     type: mongoose.Types.ObjectId,
-    ref: 'Producto',
+    ref: 'productos',
     required: true,
   },
   sapItemCode: {
@@ -18,7 +18,7 @@ const consumoItemSchema = new Schema({
   productName: String,
   loteId: {
     type: mongoose.Types.ObjectId,
-    ref: 'Lote',
+    ref: 'lotes',
   },
   lotNumber: {
     type: String,
@@ -40,7 +40,7 @@ const consumoSchema = new Schema({
   // Centro where consumption occurred
   centroId: {
     type: mongoose.Types.ObjectId,
-    ref: 'Locacion',
+    ref: 'locaciones',
     required: true,
   },
   centroName: String,
@@ -89,7 +89,7 @@ const consumoSchema = new Schema({
   notes: String,
   status: {
     type: String,
-    enum: ['PENDING', 'SYNCED', 'FAILED'],
+    enum: ['PENDING', 'SYNCED', 'FAILED', 'RETRYING'],
     default: 'PENDING',
   },
 

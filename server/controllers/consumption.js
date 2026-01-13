@@ -514,20 +514,44 @@ exports.getOne = async (req, res, next) => {
 /**
  * POST /api/consumption/:id/retry-sap
  * Retry SAP sync for a failed consumption
+ *
+ * Uses optimistic locking to prevent duplicate SAP documents:
+ * 1. Atomically claim the retry by setting status to 'RETRYING'
+ * 2. If claim fails, another request is already processing
+ * 3. Call SAP and update with result
  */
 exports.retrySap = async (req, res, next) => {
   try {
     const { id } = req.params;
 
     const Consumos = await getConsumosModel(req.companyId);
-    const consumo = await Consumos.findById(id);
+
+    // Atomically claim the retry - only succeeds if not already synced or retrying
+    const consumo = await Consumos.findOneAndUpdate(
+      {
+        _id: id,
+        'sapSync.pushed': false,
+        status: { $ne: 'RETRYING' },
+      },
+      {
+        $set: { status: 'RETRYING' },
+      },
+      { new: true }
+    );
 
     if (!consumo) {
-      return res.status(404).json({ error: 'Consumo no encontrado' });
-    }
-
-    if (consumo.sapSync.pushed) {
-      return res.status(400).json({ error: 'Este consumo ya está sincronizado con SAP' });
+      // Check why we couldn't claim it
+      const existing = await Consumos.findById(id).lean();
+      if (!existing) {
+        return res.status(404).json({ error: 'Consumo no encontrado' });
+      }
+      if (existing.sapSync?.pushed) {
+        return res.status(400).json({ error: 'Este consumo ya está sincronizado con SAP' });
+      }
+      if (existing.status === 'RETRYING') {
+        return res.status(409).json({ error: 'Ya hay un reintento en progreso' });
+      }
+      return res.status(400).json({ error: 'No se pudo iniciar el reintento' });
     }
 
     // Get Centro for SAP customer code
@@ -535,6 +559,8 @@ exports.retrySap = async (req, res, next) => {
     const centro = await Locaciones.findById(consumo.centroId).lean();
 
     if (!centro?.sapIntegration?.cardCode) {
+      // Release the lock
+      await Consumos.findByIdAndUpdate(id, { $set: { status: 'FAILED' } });
       return res.status(400).json({ error: 'El Centro no tiene cliente SAP configurado' });
     }
 
@@ -567,16 +593,18 @@ exports.retrySap = async (req, res, next) => {
         doctorName: consumo.doctorName || null,
       });
 
-      consumo.sapSync = {
-        pushed: true,
-        sapDocEntry: deliveryResult.DocEntry,
-        sapDocNum: deliveryResult.DocNum,
-        sapDocType: 'DeliveryNotes',
-        pushedAt: new Date(),
-        error: null,
-      };
-      consumo.status = 'SYNCED';
-      await consumo.save();
+      // Update with success
+      await Consumos.findByIdAndUpdate(id, {
+        $set: {
+          'sapSync.pushed': true,
+          'sapSync.sapDocEntry': deliveryResult.DocEntry,
+          'sapSync.sapDocNum': deliveryResult.DocNum,
+          'sapSync.sapDocType': 'DeliveryNotes',
+          'sapSync.pushedAt': new Date(),
+          'sapSync.error': null,
+          status: 'SYNCED',
+        },
+      });
 
       res.json({
         success: true,
@@ -586,8 +614,13 @@ exports.retrySap = async (req, res, next) => {
         },
       });
     } catch (sapError) {
-      consumo.sapSync.error = sapError.message;
-      await consumo.save();
+      // Update with failure, release lock
+      await Consumos.findByIdAndUpdate(id, {
+        $set: {
+          'sapSync.error': sapError.message,
+          status: 'FAILED',
+        },
+      });
 
       res.status(500).json({
         success: false,
