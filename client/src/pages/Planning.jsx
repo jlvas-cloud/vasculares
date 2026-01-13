@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useQuery, useMutation, useQueryClient, keepPreviousData } from '@tanstack/react-query';
 import { analyticsApi, locacionesApi, productosApi, inventarioObjetivosApi, consignacionesApi, inventarioApi } from '../lib/api';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../components/ui/card';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select';
@@ -32,7 +32,7 @@ export default function Planning() {
     queryFn: () => locacionesApi.getAll({ active: true }).then((res) => res.data),
   });
 
-  const { data: planningData, isLoading } = useQuery({
+  const { data: planningData, isLoading, isFetching } = useQuery({
     queryKey: ['planning-data', category, location],
     queryFn: () => {
       const params = {};
@@ -40,6 +40,7 @@ export default function Planning() {
       if (location && location !== 'warehouse') params.locationId = location;
       return analyticsApi.getPlanningData(params).then((res) => res.data);
     },
+    placeholderData: keepPreviousData,
   });
 
   // Mutation for updating product inventory settings (warehouse view)
@@ -268,7 +269,8 @@ export default function Planning() {
       }
     : { total: 0, critical: 0, warning: 0, totalSuggested: 0 };
 
-  if (isLoading) return <div>Cargando...</div>;
+  // Show initial loading only on first load (no data yet)
+  if (isLoading && !planningData) return <div>Cargando...</div>;
 
   return (
     <div className="space-y-6">
@@ -423,9 +425,12 @@ export default function Planning() {
       </Card>
 
       {/* Planning Table */}
-      <Card>
+      <Card className={isFetching ? 'opacity-70 transition-opacity' : 'transition-opacity'}>
         <CardHeader>
-          <CardTitle>Productos ({planningData?.length || 0})</CardTitle>
+          <div className="flex items-center gap-2">
+            <CardTitle>Productos ({planningData?.length || 0})</CardTitle>
+            {isFetching && <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />}
+          </div>
           <CardDescription>
             {isWarehouseView
               ? 'Gestión de inventario y órdenes al fabricante'
