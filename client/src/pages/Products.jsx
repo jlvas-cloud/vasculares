@@ -7,13 +7,15 @@ import { Label } from '../components/ui/label';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../components/ui/card';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from '../components/ui/dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select';
-import { Plus, Package, Edit } from 'lucide-react';
+import { Plus, Package, Edit, AlertCircle } from 'lucide-react';
+import { Switch } from '../components/ui/switch';
 import { useToast } from '../components/ui/toast';
 
 export default function Products() {
   const [open, setOpen] = useState(false);
   const [editingProduct, setEditingProduct] = useState(null);
   const [selectedCategory, setSelectedCategory] = useState('');
+  const [isActive, setIsActive] = useState(true);
   const formRef = useRef(null);
   const queryClient = useQueryClient();
   const toast = useToast();
@@ -58,6 +60,7 @@ export default function Products() {
     setOpen(false);
     setEditingProduct(null);
     setSelectedCategory('');
+    setIsActive(true);
     formRef.current?.reset();
   };
 
@@ -72,6 +75,7 @@ export default function Products() {
   const handleEdit = (product) => {
     setEditingProduct(product);
     setSelectedCategory(product.category);
+    setIsActive(product.active !== false); // default to true if undefined
     setOpen(true);
   };
 
@@ -102,6 +106,7 @@ export default function Products() {
       code: parseInt(formData.get('code')),
       category: selectedCategory,
       subcategory: formData.get('subcategory') || undefined,
+      active: isActive,
     };
 
     if (Object.keys(specifications).length > 0) {
@@ -185,6 +190,21 @@ export default function Products() {
                     defaultValue={editingProduct?.subcategory || ''}
                   />
                 </div>
+                {isEditing && (
+                  <div className="flex items-center justify-between rounded-lg border p-3">
+                    <div className="space-y-0.5">
+                      <Label htmlFor="active">Producto Activo</Label>
+                      <p className="text-sm text-muted-foreground">
+                        Desactivar para ocultar de listas y reportes
+                      </p>
+                    </div>
+                    <Switch
+                      id="active"
+                      checked={isActive}
+                      onCheckedChange={setIsActive}
+                    />
+                  </div>
+                )}
                 <div className="grid grid-cols-3 gap-4">
                   <div className="grid gap-2">
                     <Label htmlFor="diameter">Diametro (mm)</Label>
@@ -239,13 +259,20 @@ export default function Products() {
 
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
         {products?.map((product) => (
-          <Card key={product._id}>
+          <Card key={product._id} className={product.active === false ? 'opacity-60' : ''}>
             <CardHeader>
               <div className="flex items-start justify-between">
                 <div className="flex items-center gap-2">
                   <Package className="h-5 w-5 text-muted-foreground" />
                   <div>
-                    <CardTitle className="text-lg">{product.name}</CardTitle>
+                    <CardTitle className="text-lg flex items-center gap-2">
+                      {product.name}
+                      {product.active === false && (
+                        <span className="text-xs bg-muted text-muted-foreground px-2 py-0.5 rounded">
+                          Inactivo
+                        </span>
+                      )}
+                    </CardTitle>
                     <CardDescription>Código: {product.code}</CardDescription>
                   </div>
                 </div>

@@ -192,19 +192,28 @@ async function main() {
     let locationBatchCount = 0;
 
     // Fetch all batch data for this location in one query
-    let allBatchStock;
+    // Query both Orsiro Mission (419%) and legacy Orsiro (364%, 391%)
+    let allBatchStock = [];
     try {
       if (binAbsEntry) {
         // Centro with bin location - use OBBQ for bin-specific data
-        allBatchStock = await sapSyncService.getBatchInventoryByBin('419%', binAbsEntry);
+        const mission = await sapSyncService.getBatchInventoryByBin('419%', binAbsEntry);
+        const legacy364 = await sapSyncService.getBatchInventoryByBin('364%', binAbsEntry);
+        const legacy391 = await sapSyncService.getBatchInventoryByBin('391%', binAbsEntry);
+        allBatchStock = [...mission, ...legacy364, ...legacy391];
         if (VERBOSE) {
           console.log(`  Fetched ${allBatchStock.length} batch records from OBBQ (bin ${binAbsEntry})`);
+          console.log(`    - Mission (419%): ${mission.length}, Legacy (364%): ${legacy364.length}, Legacy (391%): ${legacy391.length}`);
         }
       } else {
         // Main warehouse (no bins) - use OIBT
-        allBatchStock = await sapSyncService.getBatchInventoryFromOIBT('419%', warehouseCode);
+        const mission = await sapSyncService.getBatchInventoryFromOIBT('419%', warehouseCode);
+        const legacy364 = await sapSyncService.getBatchInventoryFromOIBT('364%', warehouseCode);
+        const legacy391 = await sapSyncService.getBatchInventoryFromOIBT('391%', warehouseCode);
+        allBatchStock = [...mission, ...legacy364, ...legacy391];
         if (VERBOSE) {
           console.log(`  Fetched ${allBatchStock.length} batch records from OIBT (warehouse ${warehouseCode})`);
+          console.log(`    - Mission (419%): ${mission.length}, Legacy (364%): ${legacy364.length}, Legacy (391%): ${legacy391.length}`);
         }
       }
     } catch (error) {
