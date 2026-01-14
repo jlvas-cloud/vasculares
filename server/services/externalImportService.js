@@ -13,6 +13,8 @@ const {
   getConsumosModel,
 } = require('../getModel');
 
+const { getStockTransferByDocEntry } = require('./sapService');
+
 /**
  * Validate if an external document can be imported
  * @param {string} companyId - Company ID
@@ -64,7 +66,7 @@ async function validateImport(companyId, documentId) {
       break;
 
     case 'StockTransfer':
-      await validateStockTransfer(items, { Producto, Locacion, Lote, ExternalSapDocument, errors, dependencies, preview, companyId, sapCardCode: doc.sapCardCode });
+      await validateStockTransfer(items, { Producto, Locacion, Lote, ExternalSapDocument, errors, dependencies, preview, companyId, sapCardCode: doc.sapCardCode, sapDocEntry: doc.sapDocEntry });
       break;
 
     case 'DeliveryNote':
@@ -162,8 +164,22 @@ async function validatePurchaseDeliveryNote(items, { Producto, Locacion, Lote, e
  * Validate StockTransfer
  * Requires batch to exist in source location
  */
-async function validateStockTransfer(items, { Producto, Locacion, Lote, ExternalSapDocument, errors, dependencies, preview, companyId, sapCardCode }) {
-  for (const item of items) {
+async function validateStockTransfer(items, { Producto, Locacion, Lote, ExternalSapDocument, errors, dependencies, preview, companyId, sapCardCode, sapDocEntry }) {
+  // Fetch fresh data from SAP to get bin allocations for accurate validation
+  let validationItems = items;
+  let validationCardCode = sapCardCode;
+
+  if (sapDocEntry) {
+    const freshResult = await getStockTransferByDocEntry(sapDocEntry);
+    if (freshResult.success && freshResult.document) {
+      validationItems = freshResult.document.items;
+      validationCardCode = freshResult.document.sapCardCode;
+    } else {
+      console.warn(`[Validation] Could not fetch fresh SAP data for StockTransfer ${sapDocEntry}, using stored data`);
+    }
+  }
+
+  for (const item of validationItems) {
     const itemCode = item.sapItemCode;
     const fromWarehouse = item.fromWarehouseCode;
     const toWarehouse = item.toWarehouseCode;
@@ -197,8 +213,8 @@ async function validateStockTransfer(items, { Producto, Locacion, Lote, External
     if (item.toBinAbsEntry) {
       toLocation = await findLocationByWarehouseOrBin(Locacion, toWarehouse, item.toBinAbsEntry);
     }
-    if (!toLocation && sapCardCode) {
-      toLocation = await findLocationByCardCode(Locacion, sapCardCode);
+    if (!toLocation && validationCardCode) {
+      toLocation = await findLocationByCardCode(Locacion, validationCardCode);
     }
     if (!toLocation) {
       toLocation = await findLocationByWarehouseOrBin(Locacion, toWarehouse, null);
@@ -679,7 +695,20 @@ async function importPurchaseDeliveryNote(doc, { Producto, Locacion, Lote, Inven
  * Import StockTransfer (updates Lotes, creates Consignacion)
  */
 async function importStockTransfer(doc, { Producto, Locacion, Lote, Inventario, Consignacion, user }) {
-  const items = doc.items || [];
+  // Fetch fresh data from SAP to get bin allocations (list queries don't include them)
+  const freshResult = await getStockTransferByDocEntry(doc.sapDocEntry);
+  let items = doc.items || [];
+  let sapCardCode = doc.sapCardCode;
+
+  if (freshResult.success && freshResult.document) {
+    // Use fresh data with bin allocations
+    items = freshResult.document.items;
+    sapCardCode = freshResult.document.sapCardCode;
+    console.log(`[Import] Fetched fresh SAP data for StockTransfer ${doc.sapDocEntry}, found ${items.length} items with bin data`);
+  } else {
+    console.warn(`[Import] Could not fetch fresh SAP data for StockTransfer ${doc.sapDocEntry}, using stored data: ${freshResult.error}`);
+  }
+
   const created = { lotesUpdated: 0, lotesCreated: 0, consignacion: 0 };
   const transferItems = [];
   let firstFromLocation = null;
@@ -689,13 +718,13 @@ async function importStockTransfer(doc, { Producto, Locacion, Lote, Inventario, 
     const product = await Producto.findOne({ sapItemCode: item.sapItemCode, active: true });
     const fromLocation = await findLocationByWarehouseOrBin(Locacion, item.fromWarehouseCode, item.fromBinAbsEntry);
 
-    // For destination: try bin first, then cardCode (from document), then warehouse
+    // For destination: try bin first (from fresh SAP data), then cardCode, then warehouse
     let toLocation = null;
     if (item.toBinAbsEntry) {
       toLocation = await findLocationByWarehouseOrBin(Locacion, item.toWarehouseCode, item.toBinAbsEntry);
     }
-    if (!toLocation && doc.sapCardCode) {
-      toLocation = await findLocationByCardCode(Locacion, doc.sapCardCode);
+    if (!toLocation && sapCardCode) {
+      toLocation = await findLocationByCardCode(Locacion, sapCardCode);
     }
     if (!toLocation) {
       toLocation = await findLocationByWarehouseOrBin(Locacion, item.toWarehouseCode, null);

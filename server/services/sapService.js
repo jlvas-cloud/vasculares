@@ -1107,7 +1107,8 @@ async function getRecentStockTransfers(since, itemCodes = null) {
 async function getRecentStockTransfersOData(since, itemCodes = null) {
   try {
     const formattedDate = formatODataDate(since);
-    // Include CardCode/CardName and expand bin allocations
+    // NOTE: $select strips nested bin allocations, but that's OK for list queries.
+    // Full bin data is fetched individually during import via getStockTransferByDocEntry()
     const endpoint = `/StockTransfers?$filter=DocDate ge '${formattedDate}'&$select=DocEntry,DocNum,DocDate,CardCode,CardName,Comments,StockTransferLines&$orderby=DocDate desc`;
 
     let documents = await fetchAllPages(endpoint);
@@ -1144,6 +1145,56 @@ async function getRecentStockTransfersOData(since, itemCodes = null) {
   } catch (error) {
     console.error('Error fetching StockTransfers via OData:', error.message);
     return { success: false, documents: [], error: error.message };
+  }
+}
+
+/**
+ * Get a single StockTransfer by DocEntry with full bin allocation data
+ * Used during import to get precise bin locations (list queries don't return bin allocations)
+ *
+ * @param {number} docEntry - SAP document entry number
+ * @returns {Promise<Object>} { success: boolean, document: Object, error?: string }
+ */
+async function getStockTransferByDocEntry(docEntry) {
+  await ensureSession();
+
+  try {
+    // Fetch single document by key - this returns full nested data including bin allocations
+    const response = await sapRequest('GET', `/StockTransfers(${docEntry})`);
+
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({}));
+      const errorMessage = errorData.error?.message?.value || response.statusText;
+      return { success: false, document: null, error: errorMessage };
+    }
+
+    const data = await response.json();
+
+    // Map to our standard structure with bin allocations
+    const mapped = {
+      sapDocEntry: data.DocEntry,
+      sapDocNum: data.DocNum,
+      sapDocType: 'StockTransfer',
+      sapDocDate: new Date(data.DocDate),
+      sapCardCode: data.CardCode,
+      sapCardName: data.CardName,
+      comments: data.Comments,
+      items: (data.StockTransferLines || []).map(line => ({
+        lineNum: line.LineNum,
+        sapItemCode: line.ItemCode,
+        quantity: line.Quantity,
+        batchNumber: line.BatchNumbers?.[0]?.BatchNumber || null,
+        fromWarehouseCode: line.FromWarehouseCode,
+        toWarehouseCode: line.WarehouseCode,
+        fromBinAbsEntry: line.StockTransferLinesBinAllocations?.find(a => a.BinActionType === 'batFromWarehouse')?.BinAbsEntry || null,
+        toBinAbsEntry: line.StockTransferLinesBinAllocations?.find(a => a.BinActionType === 'batToWarehouse')?.BinAbsEntry || null,
+      })),
+    };
+
+    return { success: true, document: mapped };
+  } catch (error) {
+    console.error(`Error fetching StockTransfer ${docEntry}:`, error.message);
+    return { success: false, document: null, error: error.message };
   }
 }
 
@@ -1290,4 +1341,6 @@ module.exports = {
   getRecentPurchaseDeliveryNotes,
   getRecentStockTransfers,
   getRecentDeliveryNotes,
+  // Single document fetch (for import with full bin data)
+  getStockTransferByDocEntry,
 };
