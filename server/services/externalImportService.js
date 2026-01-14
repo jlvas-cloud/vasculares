@@ -677,6 +677,9 @@ async function importPurchaseDeliveryNote(doc, { Producto, Locacion, Lote, Inven
     },
     notes: `Importado desde documento externo SAP ${doc.sapDocNum}`,
     createdBy: user,
+    // Origin tracking
+    origin: 'SAP_IMPORT',
+    importedFromId: doc._id,
   });
   await goodsReceipt.save();
   created.goodsReceipt = 1;
@@ -871,6 +874,9 @@ async function importStockTransfer(doc, { Producto, Locacion, Lote, Inventario, 
     confirmedAt: new Date(),
     notes: `Importado desde documento externo SAP ${doc.sapDocNum}`,
     createdBy: user,
+    // Origin tracking
+    origin: 'SAP_IMPORT',
+    importedFromId: doc._id,
   });
   await consignacion.save();
   created.consignacion = 1;
@@ -985,6 +991,9 @@ async function importDeliveryNote(doc, { Producto, Locacion, Lote, Inventario, C
     status: 'SYNCED',
     notes: `Importado desde documento externo SAP ${doc.sapDocNum}`,
     createdBy: user,
+    // Origin tracking
+    origin: 'SAP_IMPORT',
+    importedFromId: doc._id,
   });
   await consumo.save();
   created.consumo = 1;

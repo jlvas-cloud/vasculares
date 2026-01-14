@@ -288,6 +288,51 @@ const product = await Productos.findOne({
    - Check status before allowing import
    - Show error if IMPORTED status
 
+## Document Origin Tracking
+
+**Problem:** Once imported, Consignacion/GoodsReceipt/Consumo records look identical to documents created in the app. Users need to distinguish:
+- Documents created in app → pushed to SAP
+- Documents created in SAP → imported to app
+
+**Solution:** Add origin tracking fields to document schemas:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `origin` | `'APP' \| 'SAP_IMPORT'` | Where the document was created |
+| `importedFromId` | `ObjectId` | Reference to ExternalSapDocument (if imported) |
+
+### Schema Changes
+
+```javascript
+// Add to Consignacion, GoodsReceipt, Consumo schemas:
+origin: {
+  type: String,
+  enum: ['APP', 'SAP_IMPORT'],
+  default: 'APP'
+},
+importedFromId: {
+  type: mongoose.Schema.Types.ObjectId,
+  ref: 'ExternalSapDocument'
+}
+```
+
+### UI Display
+
+- Documents with `origin: 'SAP_IMPORT'` show a badge: **"Importado SAP"**
+- Can filter by origin in list views
+- Click badge to see import details (detected date, imported by, etc.)
+
+### Files to Update
+
+| File | Change |
+|------|--------|
+| `models/consignacionModel.js` | Add origin + importedFromId fields |
+| `models/goodsReceiptModel.js` | Add origin + importedFromId fields |
+| `models/consumoModel.js` | Add origin + importedFromId fields |
+| `services/externalImportService.js` | Set origin='SAP_IMPORT' and importedFromId when importing |
+
+---
+
 ## Testing Checklist
 
 - [ ] Import PurchaseDeliveryNote with new batch
@@ -298,3 +343,5 @@ const product = await Productos.findOne({
 - [ ] Import DeliveryNote with insufficient qty (should fail)
 - [ ] Dependency detection works
 - [ ] Cannot import same document twice
+- [ ] Imported documents show origin='SAP_IMPORT'
+- [ ] importedFromId links back to ExternalSapDocument

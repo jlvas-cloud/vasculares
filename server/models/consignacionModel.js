@@ -127,6 +127,19 @@ const consignacionSchema = new Schema({
   notes: {
     type: String,
   },
+
+  // Origin tracking (for distinguishing app-created vs imported documents)
+  origin: {
+    type: String,
+    enum: ['APP', 'SAP_IMPORT'],
+    default: 'APP',
+    description: 'Where the document was created',
+  },
+  importedFromId: {
+    type: mongoose.Types.ObjectId,
+    ref: 'externalsapdocuments',
+    description: 'Reference to ExternalSapDocument if imported',
+  },
 }, { timestamps: true });
 
 // Indexes
