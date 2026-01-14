@@ -175,7 +175,9 @@ ENABLE_CRON_JOBS=true                # Set to false to disable nightly job
 
 ## Current State
 
-- **Products:** 45 imported (Orsiro Mission stents)
+- **Products:** 92 total
+  - 84 STENTS_CORONARIOS (Orsiro Mission 419xxx + Legacy Orsiro 364xxx/391xxx)
+  - 8 STENTS_RECUBIERTOS (Papyrus 369xxx/381xxx)
 - **Locations:** 6 configured (1 warehouse + 5 centros)
 - **SAP Integration:** Working (tested with real SAP)
 - **Status:** Pre-production, testing phase
