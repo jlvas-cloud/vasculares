@@ -9,7 +9,7 @@ import { Input } from '../components/ui/input';
 import { Button } from '../components/ui/button';
 import { Badge } from '../components/ui/badge';
 import { useToast } from '../components/ui/toast';
-import { Package, Truck, AlertTriangle, CheckCircle2, Clock, XCircle, RefreshCw } from 'lucide-react';
+import { Package, Truck, AlertTriangle, CheckCircle2, Clock, XCircle, RefreshCw, Download } from 'lucide-react';
 
 export default function Consignaciones() {
   const [statusFilter, setStatusFilter] = useState('all');
@@ -140,6 +140,19 @@ export default function Consignaciones() {
     );
   };
 
+  const getOriginBadge = (consignment) => {
+    // origin undefined or 'APP' means created in app, 'SAP_IMPORT' means imported
+    if (consignment.origin === 'SAP_IMPORT') {
+      return (
+        <Badge className="bg-purple-100 text-purple-800 border-0">
+          <Download className="h-3 w-3 mr-1" />
+          Importado SAP
+        </Badge>
+      );
+    }
+    return null;
+  };
+
   const formatDate = (dateString) => {
     const date = new Date(dateString);
     return date.toLocaleDateString('es-DO', {
@@ -229,7 +242,10 @@ export default function Consignaciones() {
                           )}
                         </div>
                       </div>
-                      <div>{getStatusBadge(consignment)}</div>
+                      <div className="flex flex-col gap-1 items-end">
+                        {getOriginBadge(consignment)}
+                        {getStatusBadge(consignment)}
+                      </div>
                     </div>
                   </CardContent>
                 </Card>

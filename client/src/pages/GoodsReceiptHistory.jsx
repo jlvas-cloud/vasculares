@@ -6,7 +6,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '.
 import { Input } from '../components/ui/input';
 import { Label } from '../components/ui/label';
 import { Button } from '../components/ui/button';
-import { Package, Filter, X, CheckCircle2, XCircle, RefreshCw, ChevronDown, ChevronUp, FileBox } from 'lucide-react';
+import { Package, Filter, X, CheckCircle2, XCircle, RefreshCw, ChevronDown, ChevronUp, FileBox, Download } from 'lucide-react';
 import { Badge } from '../components/ui/badge';
 import { formatDate } from '../lib/utils';
 import { useToast } from '../components/ui/toast';
@@ -87,6 +87,18 @@ export default function GoodsReceiptHistory() {
       color: 'bg-red-100 text-red-700 border-red-200',
       error: sap.error,
     };
+  };
+
+  const getOriginBadge = (receipt) => {
+    if (receipt.origin === 'SAP_IMPORT') {
+      return (
+        <Badge className="bg-purple-100 text-purple-800 border-0">
+          <Download className="h-3 w-3 mr-1" />
+          Importado SAP
+        </Badge>
+      );
+    }
+    return null;
   };
 
   const toggleExpand = (receiptId) => {
@@ -217,6 +229,7 @@ export default function GoodsReceiptHistory() {
                           <div>
                             <div className="font-medium flex items-center gap-2">
                               {receipt.locationName || 'Sin ubicación'}
+                              {getOriginBadge(receipt)}
                               <Badge variant="outline" className={`text-xs ${sapStatus.color}`}>
                                 {SapIcon && <SapIcon className="h-3 w-3 mr-1" />}
                                 {sapStatus.label}

@@ -26,6 +26,7 @@ import {
   User,
   Stethoscope,
   FileText,
+  Download,
 } from 'lucide-react';
 import { useToast } from '../components/ui/toast';
 import { formatDate, formatDateTime } from '../lib/utils';
@@ -104,6 +105,19 @@ export default function ConsumptionHistory() {
         Pendiente
       </Badge>
     );
+  };
+
+  const getOriginBadge = (consumo) => {
+    // origin undefined or 'APP' means created in app, 'SAP_IMPORT' means imported
+    if (consumo.origin === 'SAP_IMPORT') {
+      return (
+        <Badge variant="outline" className="bg-purple-50 text-purple-700">
+          <Download className="h-3 w-3 mr-1" />
+          Importado SAP
+        </Badge>
+      );
+    }
+    return null;
   };
 
   const handleRowClick = (consumo) => {
@@ -231,7 +245,10 @@ export default function ConsumptionHistory() {
                         <span className="text-muted-foreground">Cant: </span>
                         <span className="font-medium">{consumo.totalQuantity}</span>
                       </div>
-                      <div>{getStatusBadge(consumo)}</div>
+                      <div className="flex flex-col gap-1">
+                        {getOriginBadge(consumo)}
+                        {getStatusBadge(consumo)}
+                      </div>
                       <div className="flex justify-end gap-2">
                         {consumo.status === 'FAILED' && (
                           <Button
