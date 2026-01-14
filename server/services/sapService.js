@@ -895,16 +895,89 @@ async function fetchAllPages(initialEndpoint) {
 }
 
 /**
- * Get recent Purchase Delivery Notes from SAP
- * Used for reconciliation to detect goods receipts created outside our app
+ * Get recent Purchase Delivery Notes from SAP using SQL query
+ * Filters server-side for efficiency - only fetches documents with our item codes
  *
  * @param {Date} since - Get documents since this date
- * @param {Array<string>} itemCodes - Filter to documents containing these item codes (optional)
+ * @param {Array<string>} itemCodes - Filter to documents containing these item codes (required for SQL)
  * @returns {Promise<Object>} { success: boolean, documents: Array, error?: string }
  */
 async function getRecentPurchaseDeliveryNotes(since, itemCodes = null) {
   await ensureSession();
 
+  try {
+    // If no item codes provided, fall back to empty result (reconciliation always provides codes)
+    if (!itemCodes || itemCodes.length === 0) {
+      return { success: true, documents: [] };
+    }
+
+    const formattedDate = since.toISOString().split('T')[0]; // YYYY-MM-DD format for SQL
+    const escapedCodes = itemCodes.map(code => `'${sanitizeODataValue(code)}'`).join(',');
+
+    // SQL query that filters and joins on the server side
+    // OPDN = Purchase Delivery Note header, PDN1 = lines, IBT1 = batch allocations
+    const sqlText = `
+      SELECT DISTINCT
+        T0.DocEntry, T0.DocNum, T0.DocDate, T0.CardCode, T0.CardName, T0.Comments,
+        T1.LineNum, T1.ItemCode, T1.Quantity, T1.WhsCode,
+        T2.BatchNum as BatchNumber, T2.Quantity as BatchQty
+      FROM OPDN T0
+      INNER JOIN PDN1 T1 ON T0.DocEntry = T1.DocEntry
+      LEFT JOIN IBT1 T2 ON T1.DocEntry = T2.BaseEntry AND T1.LineNum = T2.BaseLinNum AND T2.BaseType = 20
+      WHERE T0.DocDate >= '${formattedDate}'
+        AND T1.ItemCode IN (${escapedCodes})
+      ORDER BY T0.DocDate DESC, T0.DocEntry, T1.LineNum
+    `.trim();
+
+    // Use a hash of the date for unique query code
+    const queryCode = `RECON_PDN_${formattedDate.replace(/-/g, '')}`;
+
+    const results = await executeSQLQuery(queryCode, 'Reconciliation Purchase Delivery Notes', sqlText);
+
+    // Group results by DocEntry to reconstruct document structure
+    const docsMap = new Map();
+    for (const row of results || []) {
+      const docEntry = row.DocEntry;
+      if (!docsMap.has(docEntry)) {
+        docsMap.set(docEntry, {
+          sapDocEntry: row.DocEntry,
+          sapDocNum: row.DocNum,
+          sapDocType: 'PurchaseDeliveryNote',
+          sapDocDate: new Date(row.DocDate),
+          cardCode: row.CardCode,
+          cardName: row.CardName,
+          comments: row.Comments,
+          items: [],
+        });
+      }
+      // Add line item (avoid duplicates from batch join)
+      const doc = docsMap.get(docEntry);
+      const existingLine = doc.items.find(i => i.lineNum === row.LineNum);
+      if (!existingLine) {
+        doc.items.push({
+          lineNum: row.LineNum,
+          sapItemCode: row.ItemCode,
+          quantity: row.Quantity,
+          batchNumber: row.BatchNumber || null,
+          warehouseCode: row.WhsCode,
+          binAbsEntry: null, // Would need OBIN join for this
+        });
+      }
+    }
+
+    return { success: true, documents: Array.from(docsMap.values()) };
+  } catch (error) {
+    console.error('Error fetching PurchaseDeliveryNotes via SQL:', error.message);
+    // Fall back to OData approach if SQL fails (e.g., table not in allowlist)
+    return getRecentPurchaseDeliveryNotesOData(since, itemCodes);
+  }
+}
+
+/**
+ * Fallback OData-based query for Purchase Delivery Notes
+ * Used if SQL query fails (e.g., tables not in b1s_sqltable.conf)
+ */
+async function getRecentPurchaseDeliveryNotesOData(since, itemCodes = null) {
   try {
     const formattedDate = formatODataDate(since);
     const endpoint = `/PurchaseDeliveryNotes?$filter=DocDate ge '${formattedDate}'&$select=DocEntry,DocNum,DocDate,CardCode,CardName,Comments,DocumentLines&$orderby=DocDate desc`;
@@ -939,22 +1012,93 @@ async function getRecentPurchaseDeliveryNotes(since, itemCodes = null) {
 
     return { success: true, documents: mapped };
   } catch (error) {
-    console.error('Error fetching PurchaseDeliveryNotes:', error.message);
+    console.error('Error fetching PurchaseDeliveryNotes via OData:', error.message);
     return { success: false, documents: [], error: error.message };
   }
 }
 
 /**
- * Get recent Stock Transfers from SAP
- * Used for reconciliation to detect transfers created outside our app
+ * Get recent Stock Transfers from SAP using SQL query
+ * Filters server-side for efficiency - only fetches transfers with our item codes
  *
  * @param {Date} since - Get documents since this date
- * @param {Array<string>} itemCodes - Filter to documents containing these item codes (optional)
+ * @param {Array<string>} itemCodes - Filter to documents containing these item codes (required for SQL)
  * @returns {Promise<Object>} { success: boolean, documents: Array, error?: string }
  */
 async function getRecentStockTransfers(since, itemCodes = null) {
   await ensureSession();
 
+  try {
+    // If no item codes provided, fall back to empty result
+    if (!itemCodes || itemCodes.length === 0) {
+      return { success: true, documents: [] };
+    }
+
+    const formattedDate = since.toISOString().split('T')[0];
+    const escapedCodes = itemCodes.map(code => `'${sanitizeODataValue(code)}'`).join(',');
+
+    // SQL query: OWTR = Stock Transfer header, WTR1 = lines, IBT1 = batch allocations
+    const sqlText = `
+      SELECT DISTINCT
+        T0.DocEntry, T0.DocNum, T0.DocDate, T0.Comments,
+        T1.LineNum, T1.ItemCode, T1.Quantity, T1.FromWhsCod as FromWarehouse, T1.WhsCode as ToWarehouse,
+        T2.BatchNum as BatchNumber, T2.Quantity as BatchQty
+      FROM OWTR T0
+      INNER JOIN WTR1 T1 ON T0.DocEntry = T1.DocEntry
+      LEFT JOIN IBT1 T2 ON T1.DocEntry = T2.BaseEntry AND T1.LineNum = T2.BaseLinNum AND T2.BaseType = 67
+      WHERE T0.DocDate >= '${formattedDate}'
+        AND T1.ItemCode IN (${escapedCodes})
+      ORDER BY T0.DocDate DESC, T0.DocEntry, T1.LineNum
+    `.trim();
+
+    const queryCode = `RECON_WTR_${formattedDate.replace(/-/g, '')}`;
+
+    const results = await executeSQLQuery(queryCode, 'Reconciliation Stock Transfers', sqlText);
+
+    // Group results by DocEntry to reconstruct document structure
+    const docsMap = new Map();
+    for (const row of results || []) {
+      const docEntry = row.DocEntry;
+      if (!docsMap.has(docEntry)) {
+        docsMap.set(docEntry, {
+          sapDocEntry: row.DocEntry,
+          sapDocNum: row.DocNum,
+          sapDocType: 'StockTransfer',
+          sapDocDate: new Date(row.DocDate),
+          comments: row.Comments,
+          items: [],
+        });
+      }
+      // Add line item (avoid duplicates from batch join)
+      const doc = docsMap.get(docEntry);
+      const existingLine = doc.items.find(i => i.lineNum === row.LineNum);
+      if (!existingLine) {
+        doc.items.push({
+          lineNum: row.LineNum,
+          sapItemCode: row.ItemCode,
+          quantity: row.Quantity,
+          batchNumber: row.BatchNumber || null,
+          fromWarehouseCode: row.FromWarehouse,
+          toWarehouseCode: row.ToWarehouse,
+          fromBinAbsEntry: null, // Would need additional join for bin info
+          toBinAbsEntry: null,
+        });
+      }
+    }
+
+    return { success: true, documents: Array.from(docsMap.values()) };
+  } catch (error) {
+    console.error('Error fetching StockTransfers via SQL:', error.message);
+    // Fall back to OData approach if SQL fails
+    return getRecentStockTransfersOData(since, itemCodes);
+  }
+}
+
+/**
+ * Fallback OData-based query for Stock Transfers
+ * Used if SQL query fails (e.g., tables not in b1s_sqltable.conf)
+ */
+async function getRecentStockTransfersOData(since, itemCodes = null) {
   try {
     const formattedDate = formatODataDate(since);
     const endpoint = `/StockTransfers?$filter=DocDate ge '${formattedDate}'&$select=DocEntry,DocNum,DocDate,Comments,StockTransferLines&$orderby=DocDate desc`;
@@ -989,22 +1133,93 @@ async function getRecentStockTransfers(since, itemCodes = null) {
 
     return { success: true, documents: mapped };
   } catch (error) {
-    console.error('Error fetching StockTransfers:', error.message);
+    console.error('Error fetching StockTransfers via OData:', error.message);
     return { success: false, documents: [], error: error.message };
   }
 }
 
 /**
- * Get recent Delivery Notes from SAP
- * Used for reconciliation to detect consumptions/deliveries created outside our app
+ * Get recent Delivery Notes from SAP using SQL query
+ * Filters server-side for efficiency - only fetches deliveries with our item codes
  *
  * @param {Date} since - Get documents since this date
- * @param {Array<string>} itemCodes - Filter to documents containing these item codes (optional)
+ * @param {Array<string>} itemCodes - Filter to documents containing these item codes (required for SQL)
  * @returns {Promise<Object>} { success: boolean, documents: Array, error?: string }
  */
 async function getRecentDeliveryNotes(since, itemCodes = null) {
   await ensureSession();
 
+  try {
+    // If no item codes provided, fall back to empty result
+    if (!itemCodes || itemCodes.length === 0) {
+      return { success: true, documents: [] };
+    }
+
+    const formattedDate = since.toISOString().split('T')[0];
+    const escapedCodes = itemCodes.map(code => `'${sanitizeODataValue(code)}'`).join(',');
+
+    // SQL query: ODLN = Delivery Note header, DLN1 = lines, IBT1 = batch allocations
+    const sqlText = `
+      SELECT DISTINCT
+        T0.DocEntry, T0.DocNum, T0.DocDate, T0.CardCode, T0.CardName, T0.Comments,
+        T1.LineNum, T1.ItemCode, T1.Quantity, T1.WhsCode,
+        T2.BatchNum as BatchNumber, T2.Quantity as BatchQty
+      FROM ODLN T0
+      INNER JOIN DLN1 T1 ON T0.DocEntry = T1.DocEntry
+      LEFT JOIN IBT1 T2 ON T1.DocEntry = T2.BaseEntry AND T1.LineNum = T2.BaseLinNum AND T2.BaseType = 15
+      WHERE T0.DocDate >= '${formattedDate}'
+        AND T1.ItemCode IN (${escapedCodes})
+      ORDER BY T0.DocDate DESC, T0.DocEntry, T1.LineNum
+    `.trim();
+
+    const queryCode = `RECON_DLN_${formattedDate.replace(/-/g, '')}`;
+
+    const results = await executeSQLQuery(queryCode, 'Reconciliation Delivery Notes', sqlText);
+
+    // Group results by DocEntry to reconstruct document structure
+    const docsMap = new Map();
+    for (const row of results || []) {
+      const docEntry = row.DocEntry;
+      if (!docsMap.has(docEntry)) {
+        docsMap.set(docEntry, {
+          sapDocEntry: row.DocEntry,
+          sapDocNum: row.DocNum,
+          sapDocType: 'DeliveryNote',
+          sapDocDate: new Date(row.DocDate),
+          cardCode: row.CardCode,
+          cardName: row.CardName,
+          comments: row.Comments,
+          items: [],
+        });
+      }
+      // Add line item (avoid duplicates from batch join)
+      const doc = docsMap.get(docEntry);
+      const existingLine = doc.items.find(i => i.lineNum === row.LineNum);
+      if (!existingLine) {
+        doc.items.push({
+          lineNum: row.LineNum,
+          sapItemCode: row.ItemCode,
+          quantity: row.Quantity,
+          batchNumber: row.BatchNumber || null,
+          warehouseCode: row.WhsCode,
+          binAbsEntry: null, // Would need OBIN join for this
+        });
+      }
+    }
+
+    return { success: true, documents: Array.from(docsMap.values()) };
+  } catch (error) {
+    console.error('Error fetching DeliveryNotes via SQL:', error.message);
+    // Fall back to OData approach if SQL fails
+    return getRecentDeliveryNotesOData(since, itemCodes);
+  }
+}
+
+/**
+ * Fallback OData-based query for Delivery Notes
+ * Used if SQL query fails (e.g., tables not in b1s_sqltable.conf)
+ */
+async function getRecentDeliveryNotesOData(since, itemCodes = null) {
   try {
     const formattedDate = formatODataDate(since);
     const endpoint = `/DeliveryNotes?$filter=DocDate ge '${formattedDate}'&$select=DocEntry,DocNum,DocDate,CardCode,CardName,Comments,DocumentLines&$orderby=DocDate desc`;
@@ -1039,7 +1254,7 @@ async function getRecentDeliveryNotes(since, itemCodes = null) {
 
     return { success: true, documents: mapped };
   } catch (error) {
-    console.error('Error fetching DeliveryNotes:', error.message);
+    console.error('Error fetching DeliveryNotes via OData:', error.message);
     return { success: false, documents: [], error: error.message };
   }
 }

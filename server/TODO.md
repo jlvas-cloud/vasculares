@@ -296,4 +296,39 @@ node jobs/nightlyReconciliation.js --run-now --company-id=<id>
 **Dependency Added:**
 - `node-cron@^3.0.3` - For scheduling nightly jobs
 
+### Reconciliation SQLQueries Optimization (2026-01-14)
+**Status:** COMPLETE
+
+Optimized reconciliation queries to use SQLQueries endpoint instead of OData with client-side filtering.
+
+**Before:** OData endpoint fetched ALL documents from SAP, then filtered client-side by itemCodes
+**After:** SQL query filters server-side, only returning documents with our products
+
+**SAP Tables Required in `b1s_sqltable.conf`:**
+| Table | Purpose | Document Type |
+|-------|---------|---------------|
+| OPDN | Purchase Delivery Note header | Goods Receipts |
+| PDN1 | Purchase Delivery Note lines | Goods Receipts |
+| OWTR | Stock Transfer header | Transfers |
+| WTR1 | Stock Transfer lines | Transfers |
+| ODLN | Delivery Note header | Consumptions |
+| DLN1 | Delivery Note lines | Consumptions |
+| IBT1 | Batch allocation details | All (batch info) |
+
+**Note:** If SQL queries fail (tables not in AllowList), functions automatically fall back to OData approach.
+
+**SQL Query Pattern:**
+```sql
+SELECT DISTINCT
+  T0.DocEntry, T0.DocNum, T0.DocDate, T0.CardCode, T0.CardName, T0.Comments,
+  T1.LineNum, T1.ItemCode, T1.Quantity, T1.WhsCode,
+  T2.BatchNum as BatchNumber
+FROM {HEADER_TABLE} T0
+INNER JOIN {LINES_TABLE} T1 ON T0.DocEntry = T1.DocEntry
+LEFT JOIN IBT1 T2 ON T1.DocEntry = T2.BaseEntry AND T1.LineNum = T2.BaseLinNum AND T2.BaseType = {DOC_TYPE}
+WHERE T0.DocDate >= '{formattedDate}'
+  AND T1.ItemCode IN ({ourItemCodes})
+ORDER BY T0.DocDate DESC, T0.DocEntry, T1.LineNum
+```
+
 ---

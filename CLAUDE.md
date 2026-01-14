@@ -169,7 +169,8 @@ ENABLE_CRON_JOBS=true                # Set to false to disable nightly job
 - `server/TODO.md` - Known issues and recent work
 - `server/ISSUES.md` - SAP bug tracking (18 issues resolved)
 - `server/docs/sap-sqlqueries-setup.md` - SAP SQLQueries configuration for inventory sync
-- `server/docs/sap-reconciliation-design.md` - **SAP reconciliation system design (IMPLEMENTED)**
+- `server/docs/sap-sqltable-allowlist.md` - **SAP tables needed in b1s_sqltable.conf (for production setup)**
+- `server/docs/sap-reconciliation-design.md` - SAP reconciliation system design (IMPLEMENTED)
 - `server/docs/exportar-inventario-sap.md` - Manual CSV export from SAP (fallback)
 - `server/docs/PLAN.md` - Active planning document (feature tracking, backlog)
 
