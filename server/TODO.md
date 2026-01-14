@@ -98,30 +98,32 @@ SAP partner (Winder) added OIBT to the `b1s_sqltable.conf` AllowList file.
 
 ---
 
-## SAP Batch Validation (High Priority)
+## SAP Batch Validation - COMPLETE
 
 **Issue discovered:** 2026-01-12
+**Resolved:** 2026-01-13
 
 **Problem:**
-When creating lots locally (via packing list OCR or manual entry), there's no validation against SAP to verify the batch-item relationship. This can cause:
-- Local lot linked to wrong product (e.g., batch `06251742` linked to item `419102` locally, but SAP has it as `419123`)
-- Stock transfers fail with "No matching records found (ODBC -2028)"
-- Data divergence between our system and SAP
+When creating lots locally (via packing list OCR or manual entry), there's no validation against SAP to verify the batch-item relationship.
 
-**Root cause:**
-Lots can be created without a formal goods receipt that syncs to SAP. The batch number exists in SAP with one ItemCode, but our system links it to a different product.
+**Solution Implemented:**
+Before creating a goods receipt, the system now validates each batch against SAP:
 
-**Proposed solution:**
-Before creating a lot with a batch number, query SAP:
-```
-GET /BatchNumberDetails?$filter=Batch eq '{batchNumber}'
-```
-If SAP returns an ItemCode, validate it matches our product's `sapItemCode`. If not, either:
-1. Reject the creation with an error
-2. Auto-correct to the SAP-linked product
-3. Warn the user about the mismatch
+1. **Backend** (`services/sapService.js`):
+   - `validateBatchItem(batchNumber)` - Query SAP BatchNumberDetails
+   - `validateBatchItems(items)` - Validate multiple batches
 
-**Affected flows:**
-- Goods Receipt (packing list extraction)
-- Manual lot creation
-- Any flow that creates lots without SAP sync
+2. **API Endpoint** (`POST /api/goods-receipt/validate-batches`):
+   - Returns mismatches with correct product info from local DB
+   - Enriches response with product name and code
+
+3. **Frontend** (`GoodsReceipt.jsx`):
+   - Validates batches before submission
+   - Shows clear error dialog with:
+     - Which batch has mismatch
+     - Selected product code (wrong)
+     - Correct SAP product code
+     - Product name from local DB
+   - Blocks creation until user corrects selection
+
+**Result:** Prevents "No matching records found (ODBC -2028)" SAP errors by catching mismatches early.
