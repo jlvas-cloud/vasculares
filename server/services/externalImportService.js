@@ -2,7 +2,16 @@
  * External Document Import Service
  * Validates and imports external SAP documents into local database
  */
-const mongoose = require('mongoose');
+const {
+  getProductosModel,
+  getLocacionesModel,
+  getLotesModel,
+  getInventarioModel,
+  getExternalSapDocumentsModel,
+  getGoodsReceiptsModel,
+  getConsignacionesModel,
+  getConsumosModel,
+} = require('../getModel');
 
 /**
  * Validate if an external document can be imported
@@ -11,11 +20,10 @@ const mongoose = require('mongoose');
  * @returns {Object} Validation result with errors, dependencies, and preview
  */
 async function validateImport(companyId, documentId) {
-  const getModel = require('../getModel');
-  const ExternalSapDocument = getModel(companyId, 'ExternalSapDocument');
-  const Producto = getModel(companyId, 'Producto');
-  const Locacion = getModel(companyId, 'Locacion');
-  const Lote = getModel(companyId, 'Lote');
+  const ExternalSapDocument = await getExternalSapDocumentsModel(companyId);
+  const Producto = await getProductosModel(companyId);
+  const Locacion = await getLocacionesModel(companyId);
+  const Lote = await getLotesModel(companyId);
 
   // Get the document
   const doc = await ExternalSapDocument.findById(documentId);
@@ -46,18 +54,21 @@ async function validateImport(companyId, documentId) {
     inventoryChanges: [],
   };
 
+  // Items are stored flat: one record per item/batch combination
+  const items = doc.items || [];
+
   // Validate based on document type
   switch (doc.sapDocType) {
     case 'PurchaseDeliveryNote':
-      await validatePurchaseDeliveryNote(doc, { Producto, Locacion, Lote, errors, preview });
+      await validatePurchaseDeliveryNote(items, { Producto, Locacion, Lote, errors, preview });
       break;
 
     case 'StockTransfer':
-      await validateStockTransfer(doc, { Producto, Locacion, Lote, ExternalSapDocument, errors, dependencies, preview });
+      await validateStockTransfer(items, { Producto, Locacion, Lote, ExternalSapDocument, errors, dependencies, preview, companyId });
       break;
 
     case 'DeliveryNote':
-      await validateDeliveryNote(doc, { Producto, Locacion, Lote, ExternalSapDocument, errors, dependencies, preview });
+      await validateDeliveryNote(items, { Producto, Locacion, Lote, ExternalSapDocument, errors, dependencies, preview, companyId });
       break;
 
     default:
@@ -79,242 +90,12 @@ async function validateImport(companyId, documentId) {
  * Validate PurchaseDeliveryNote (Goods Receipt)
  * Creates new batches - no inventory dependency
  */
-async function validatePurchaseDeliveryNote(doc, { Producto, Locacion, Lote, errors, preview }) {
-  const lines = doc.rawData?.DocumentLines || [];
-
-  for (const line of lines) {
-    const itemCode = line.ItemCode;
-    const warehouseCode = line.WarehouseCode;
-    const batchNumbers = line.BatchNumbers || [];
-
-    // 1. Check product exists
-    const product = await Producto.findOne({ sapItemCode: itemCode, active: true });
-    if (!product) {
-      errors.push({
-        type: 'MISSING_PRODUCT',
-        message: `Producto ${itemCode} no existe en el sistema`,
-        details: { itemCode },
-      });
-      continue;
-    }
-
-    // 2. Check location exists and is a warehouse
-    const location = await Locacion.findOne({
-      'sapIntegration.warehouseCode': warehouseCode,
-    });
-    if (!location) {
-      errors.push({
-        type: 'MISSING_LOCATION',
-        message: `Almacén ${warehouseCode} no está configurado`,
-        details: { warehouseCode },
-      });
-      continue;
-    }
-
-    if (location.type !== 'WAREHOUSE') {
-      errors.push({
-        type: 'INVALID_LOCATION_TYPE',
-        message: `Ubicación ${location.name} no es un almacén`,
-        details: { warehouseCode, locationType: location.type },
-      });
-      continue;
-    }
-
-    // 3. Build preview for each batch
-    for (const batch of batchNumbers) {
-      const existingLote = await Lote.findOne({
-        productId: product._id,
-        lotNumber: batch.BatchNumber,
-        currentLocationId: location._id,
-      });
-
-      if (existingLote) {
-        preview.lotesToUpdate.push({
-          loteId: existingLote._id,
-          lotNumber: batch.BatchNumber,
-          productCode: itemCode,
-          productName: product.name,
-          locationName: location.name,
-          currentQuantity: existingLote.quantity,
-          addQuantity: batch.Quantity,
-          newQuantity: existingLote.quantity + batch.Quantity,
-        });
-      } else {
-        preview.lotesToCreate.push({
-          lotNumber: batch.BatchNumber,
-          productCode: itemCode,
-          productName: product.name,
-          locationName: location.name,
-          quantity: batch.Quantity,
-          expiryDate: batch.ExpiryDate,
-        });
-      }
-
-      preview.inventoryChanges.push({
-        productCode: itemCode,
-        productName: product.name,
-        locationName: location.name,
-        change: `+${batch.Quantity}`,
-      });
-    }
-  }
-}
-
-/**
- * Validate StockTransfer
- * Requires batch to exist in source location
- */
-async function validateStockTransfer(doc, { Producto, Locacion, Lote, ExternalSapDocument, errors, dependencies, preview }) {
-  const lines = doc.rawData?.StockTransferLines || [];
-
-  for (const line of lines) {
-    const itemCode = line.ItemCode;
-    const fromWarehouse = line.FromWarehouseCode;
-    const toWarehouse = line.WarehouseCode;
-    const batchNumbers = line.BatchNumbers || [];
-
-    // 1. Check product exists
-    const product = await Producto.findOne({ sapItemCode: itemCode, active: true });
-    if (!product) {
-      errors.push({
-        type: 'MISSING_PRODUCT',
-        message: `Producto ${itemCode} no existe en el sistema`,
-        details: { itemCode },
-      });
-      continue;
-    }
-
-    // 2. Check source location exists
-    const fromLocation = await findLocationByWarehouseOrBin(Locacion, fromWarehouse, line.FromBinAbsEntry);
-    if (!fromLocation) {
-      errors.push({
-        type: 'MISSING_LOCATION',
-        message: `Almacén origen ${fromWarehouse} no está configurado`,
-        details: { warehouseCode: fromWarehouse },
-      });
-      continue;
-    }
-
-    // 3. Check destination location exists
-    const toLocation = await findLocationByWarehouseOrBin(Locacion, toWarehouse, line.BinAbsEntry);
-    if (!toLocation) {
-      errors.push({
-        type: 'MISSING_LOCATION',
-        message: `Almacén destino ${toWarehouse} no está configurado`,
-        details: { warehouseCode: toWarehouse },
-      });
-      continue;
-    }
-
-    // 4. Check each batch exists in source with sufficient quantity
-    for (const batch of batchNumbers) {
-      const sourceLote = await Lote.findOne({
-        productId: product._id,
-        lotNumber: batch.BatchNumber,
-        currentLocationId: fromLocation._id,
-      });
-
-      if (!sourceLote) {
-        // Check if there's a pending document that would create this batch
-        const dependencyDoc = await findDependencyDocument(
-          ExternalSapDocument,
-          itemCode,
-          batch.BatchNumber,
-          fromLocation,
-          'PurchaseDeliveryNote'
-        );
-
-        if (dependencyDoc) {
-          dependencies.push({
-            docId: dependencyDoc._id,
-            sapDocNum: dependencyDoc.sapDocNum,
-            sapDocType: dependencyDoc.sapDocType,
-            message: `Este documento crearía el lote ${batch.BatchNumber} faltante`,
-          });
-        }
-
-        errors.push({
-          type: 'MISSING_BATCH',
-          message: `Lote ${batch.BatchNumber} no existe en ${fromLocation.name}`,
-          details: { batch: batch.BatchNumber, location: fromLocation.name },
-        });
-        continue;
-      }
-
-      if (sourceLote.quantity < batch.Quantity) {
-        errors.push({
-          type: 'INSUFFICIENT_QUANTITY',
-          message: `Lote ${batch.BatchNumber} solo tiene ${sourceLote.quantity} unidades, se requieren ${batch.Quantity}`,
-          details: {
-            batch: batch.BatchNumber,
-            available: sourceLote.quantity,
-            required: batch.Quantity,
-          },
-        });
-        continue;
-      }
-
-      // Build preview
-      const destLote = await Lote.findOne({
-        productId: product._id,
-        lotNumber: batch.BatchNumber,
-        currentLocationId: toLocation._id,
-      });
-
-      preview.lotesToUpdate.push({
-        loteId: sourceLote._id,
-        lotNumber: batch.BatchNumber,
-        productCode: itemCode,
-        productName: product.name,
-        locationName: fromLocation.name,
-        currentQuantity: sourceLote.quantity,
-        addQuantity: -batch.Quantity,
-        newQuantity: sourceLote.quantity - batch.Quantity,
-      });
-
-      if (destLote) {
-        preview.lotesToUpdate.push({
-          loteId: destLote._id,
-          lotNumber: batch.BatchNumber,
-          productCode: itemCode,
-          productName: product.name,
-          locationName: toLocation.name,
-          currentQuantity: destLote.quantity,
-          addQuantity: batch.Quantity,
-          newQuantity: destLote.quantity + batch.Quantity,
-        });
-      } else {
-        preview.lotesToCreate.push({
-          lotNumber: batch.BatchNumber,
-          productCode: itemCode,
-          productName: product.name,
-          locationName: toLocation.name,
-          quantity: batch.Quantity,
-        });
-      }
-
-      preview.inventoryChanges.push({
-        productCode: itemCode,
-        productName: product.name,
-        fromLocation: fromLocation.name,
-        toLocation: toLocation.name,
-        quantity: batch.Quantity,
-      });
-    }
-  }
-}
-
-/**
- * Validate DeliveryNote (Consumption)
- * Requires batch to exist with sufficient quantity
- */
-async function validateDeliveryNote(doc, { Producto, Locacion, Lote, ExternalSapDocument, errors, dependencies, preview }) {
-  const lines = doc.rawData?.DocumentLines || [];
-
-  for (const line of lines) {
-    const itemCode = line.ItemCode;
-    const warehouseCode = line.WarehouseCode;
-    const batchNumbers = line.BatchNumbers || [];
+async function validatePurchaseDeliveryNote(items, { Producto, Locacion, Lote, errors, preview }) {
+  for (const item of items) {
+    const itemCode = item.sapItemCode;
+    const warehouseCode = item.warehouseCode;
+    const batchNumber = item.batchNumber;
+    const quantity = item.quantity;
 
     // 1. Check product exists
     const product = await Producto.findOne({ sapItemCode: itemCode, active: true });
@@ -328,7 +109,223 @@ async function validateDeliveryNote(doc, { Producto, Locacion, Lote, ExternalSap
     }
 
     // 2. Check location exists
-    const location = await findLocationByWarehouseOrBin(Locacion, warehouseCode, line.BinAbsEntry);
+    const location = await findLocationByWarehouseOrBin(Locacion, warehouseCode, item.binAbsEntry);
+    if (!location) {
+      errors.push({
+        type: 'MISSING_LOCATION',
+        message: `Almacén ${warehouseCode} no está configurado`,
+        details: { warehouseCode },
+      });
+      continue;
+    }
+
+    // 3. Build preview
+    if (batchNumber) {
+      const existingLote = await Lote.findOne({
+        productId: product._id,
+        lotNumber: batchNumber,
+        currentLocationId: location._id,
+      });
+
+      if (existingLote) {
+        preview.lotesToUpdate.push({
+          loteId: existingLote._id,
+          lotNumber: batchNumber,
+          productCode: itemCode,
+          productName: product.name,
+          locationName: location.name,
+          currentQuantity: existingLote.quantityAvailable,
+          addQuantity: quantity,
+          newQuantity: existingLote.quantityAvailable + quantity,
+        });
+      } else {
+        preview.lotesToCreate.push({
+          lotNumber: batchNumber,
+          productCode: itemCode,
+          productName: product.name,
+          locationName: location.name,
+          quantity: quantity,
+        });
+      }
+    }
+
+    preview.inventoryChanges.push({
+      productCode: itemCode,
+      productName: product.name,
+      locationName: location.name,
+      change: `+${quantity}`,
+    });
+  }
+}
+
+/**
+ * Validate StockTransfer
+ * Requires batch to exist in source location
+ */
+async function validateStockTransfer(items, { Producto, Locacion, Lote, ExternalSapDocument, errors, dependencies, preview, companyId }) {
+  for (const item of items) {
+    const itemCode = item.sapItemCode;
+    const fromWarehouse = item.fromWarehouseCode;
+    const toWarehouse = item.toWarehouseCode;
+    const batchNumber = item.batchNumber;
+    const quantity = item.quantity;
+
+    // 1. Check product exists
+    const product = await Producto.findOne({ sapItemCode: itemCode, active: true });
+    if (!product) {
+      errors.push({
+        type: 'MISSING_PRODUCT',
+        message: `Producto ${itemCode} no existe en el sistema`,
+        details: { itemCode },
+      });
+      continue;
+    }
+
+    // 2. Check source location exists
+    const fromLocation = await findLocationByWarehouseOrBin(Locacion, fromWarehouse, item.fromBinAbsEntry);
+    if (!fromLocation) {
+      errors.push({
+        type: 'MISSING_LOCATION',
+        message: `Almacén origen ${fromWarehouse} no está configurado`,
+        details: { warehouseCode: fromWarehouse },
+      });
+      continue;
+    }
+
+    // 3. Check destination location exists
+    const toLocation = await findLocationByWarehouseOrBin(Locacion, toWarehouse, item.toBinAbsEntry);
+    if (!toLocation) {
+      errors.push({
+        type: 'MISSING_LOCATION',
+        message: `Almacén destino ${toWarehouse} no está configurado`,
+        details: { warehouseCode: toWarehouse },
+      });
+      continue;
+    }
+
+    // 4. Check batch exists in source with sufficient quantity (if batch tracked)
+    if (batchNumber) {
+      const sourceLote = await Lote.findOne({
+        productId: product._id,
+        lotNumber: batchNumber,
+        currentLocationId: fromLocation._id,
+      });
+
+      if (!sourceLote) {
+        // Check if there's a pending document that would create this batch
+        const dependencyDoc = await findDependencyDocument(
+          ExternalSapDocument,
+          itemCode,
+          batchNumber,
+          fromLocation,
+          'PurchaseDeliveryNote',
+          companyId
+        );
+
+        if (dependencyDoc) {
+          dependencies.push({
+            docId: dependencyDoc._id,
+            sapDocNum: dependencyDoc.sapDocNum,
+            sapDocType: dependencyDoc.sapDocType,
+            message: `Este documento crearía el lote ${batchNumber} faltante`,
+          });
+        }
+
+        errors.push({
+          type: 'MISSING_BATCH',
+          message: `Lote ${batchNumber} no existe en ${fromLocation.name}`,
+          details: { batch: batchNumber, location: fromLocation.name },
+        });
+        continue;
+      }
+
+      if (sourceLote.quantityAvailable < quantity) {
+        errors.push({
+          type: 'INSUFFICIENT_QUANTITY',
+          message: `Lote ${batchNumber} solo tiene ${sourceLote.quantityAvailable} unidades, se requieren ${quantity}`,
+          details: {
+            batch: batchNumber,
+            available: sourceLote.quantityAvailable,
+            required: quantity,
+          },
+        });
+        continue;
+      }
+
+      // Build preview
+      const destLote = await Lote.findOne({
+        productId: product._id,
+        lotNumber: batchNumber,
+        currentLocationId: toLocation._id,
+      });
+
+      preview.lotesToUpdate.push({
+        loteId: sourceLote._id,
+        lotNumber: batchNumber,
+        productCode: itemCode,
+        productName: product.name,
+        locationName: fromLocation.name,
+        currentQuantity: sourceLote.quantityAvailable,
+        addQuantity: -quantity,
+        newQuantity: sourceLote.quantityAvailable - quantity,
+      });
+
+      if (destLote) {
+        preview.lotesToUpdate.push({
+          loteId: destLote._id,
+          lotNumber: batchNumber,
+          productCode: itemCode,
+          productName: product.name,
+          locationName: toLocation.name,
+          currentQuantity: destLote.quantityAvailable,
+          addQuantity: quantity,
+          newQuantity: destLote.quantityAvailable + quantity,
+        });
+      } else {
+        preview.lotesToCreate.push({
+          lotNumber: batchNumber,
+          productCode: itemCode,
+          productName: product.name,
+          locationName: toLocation.name,
+          quantity: quantity,
+        });
+      }
+    }
+
+    preview.inventoryChanges.push({
+      productCode: itemCode,
+      productName: product.name,
+      fromLocation: fromLocation.name,
+      toLocation: toLocation.name,
+      quantity: quantity,
+    });
+  }
+}
+
+/**
+ * Validate DeliveryNote (Consumption)
+ * Requires batch to exist with sufficient quantity
+ */
+async function validateDeliveryNote(items, { Producto, Locacion, Lote, ExternalSapDocument, errors, dependencies, preview, companyId }) {
+  for (const item of items) {
+    const itemCode = item.sapItemCode;
+    const warehouseCode = item.warehouseCode;
+    const batchNumber = item.batchNumber;
+    const quantity = item.quantity;
+
+    // 1. Check product exists
+    const product = await Producto.findOne({ sapItemCode: itemCode, active: true });
+    if (!product) {
+      errors.push({
+        type: 'MISSING_PRODUCT',
+        message: `Producto ${itemCode} no existe en el sistema`,
+        details: { itemCode },
+      });
+      continue;
+    }
+
+    // 2. Check location exists
+    const location = await findLocationByWarehouseOrBin(Locacion, warehouseCode, item.binAbsEntry);
     if (!location) {
       errors.push({
         type: 'MISSING_LOCATION',
@@ -338,11 +335,11 @@ async function validateDeliveryNote(doc, { Producto, Locacion, Lote, ExternalSap
       continue;
     }
 
-    // 3. Check each batch exists with sufficient quantity
-    for (const batch of batchNumbers) {
+    // 3. Check batch exists with sufficient quantity (if batch tracked)
+    if (batchNumber) {
       const lote = await Lote.findOne({
         productId: product._id,
-        lotNumber: batch.BatchNumber,
+        lotNumber: batchNumber,
         currentLocationId: location._id,
       });
 
@@ -351,9 +348,10 @@ async function validateDeliveryNote(doc, { Producto, Locacion, Lote, ExternalSap
         const transferDoc = await findDependencyDocument(
           ExternalSapDocument,
           itemCode,
-          batch.BatchNumber,
+          batchNumber,
           location,
-          'StockTransfer'
+          'StockTransfer',
+          companyId
         );
 
         if (transferDoc) {
@@ -361,26 +359,26 @@ async function validateDeliveryNote(doc, { Producto, Locacion, Lote, ExternalSap
             docId: transferDoc._id,
             sapDocNum: transferDoc.sapDocNum,
             sapDocType: transferDoc.sapDocType,
-            message: `Este documento trasladaría el lote ${batch.BatchNumber} a ${location.name}`,
+            message: `Este documento trasladaría el lote ${batchNumber} a ${location.name}`,
           });
         }
 
         errors.push({
           type: 'MISSING_BATCH',
-          message: `Lote ${batch.BatchNumber} no existe en ${location.name}`,
-          details: { batch: batch.BatchNumber, location: location.name },
+          message: `Lote ${batchNumber} no existe en ${location.name}`,
+          details: { batch: batchNumber, location: location.name },
         });
         continue;
       }
 
-      if (lote.quantity < batch.Quantity) {
+      if (lote.quantityAvailable < quantity) {
         errors.push({
           type: 'INSUFFICIENT_QUANTITY',
-          message: `Lote ${batch.BatchNumber} solo tiene ${lote.quantity} unidades`,
+          message: `Lote ${batchNumber} solo tiene ${lote.quantityAvailable} unidades`,
           details: {
-            batch: batch.BatchNumber,
-            available: lote.quantity,
-            required: batch.Quantity,
+            batch: batchNumber,
+            available: lote.quantityAvailable,
+            required: quantity,
           },
         });
         continue;
@@ -389,22 +387,22 @@ async function validateDeliveryNote(doc, { Producto, Locacion, Lote, ExternalSap
       // Build preview
       preview.lotesToUpdate.push({
         loteId: lote._id,
-        lotNumber: batch.BatchNumber,
+        lotNumber: batchNumber,
         productCode: itemCode,
         productName: product.name,
         locationName: location.name,
-        currentQuantity: lote.quantity,
-        addQuantity: -batch.Quantity,
-        newQuantity: lote.quantity - batch.Quantity,
-      });
-
-      preview.inventoryChanges.push({
-        productCode: itemCode,
-        productName: product.name,
-        locationName: location.name,
-        change: `-${batch.Quantity}`,
+        currentQuantity: lote.quantityAvailable,
+        addQuantity: -quantity,
+        newQuantity: lote.quantityAvailable - quantity,
       });
     }
+
+    preview.inventoryChanges.push({
+      productCode: itemCode,
+      productName: product.name,
+      locationName: location.name,
+      change: `-${quantity}`,
+    });
   }
 }
 
@@ -429,33 +427,27 @@ async function findLocationByWarehouseOrBin(Locacion, warehouseCode, binAbsEntry
 /**
  * Find a pending document that could create the missing batch
  */
-async function findDependencyDocument(ExternalSapDocument, itemCode, batchNumber, targetLocation, expectedDocType) {
+async function findDependencyDocument(ExternalSapDocument, itemCode, batchNumber, targetLocation, expectedDocType, companyId) {
   const pendingDocs = await ExternalSapDocument.find({
     status: 'PENDING_REVIEW',
     sapDocType: expectedDocType,
+    companyId,
   });
 
   for (const doc of pendingDocs) {
-    const lines = doc.rawData?.DocumentLines || doc.rawData?.StockTransferLines || [];
+    for (const item of doc.items || []) {
+      if (item.sapItemCode !== itemCode) continue;
+      if (item.batchNumber !== batchNumber) continue;
 
-    for (const line of lines) {
-      if (line.ItemCode !== itemCode) continue;
-
-      const batches = line.BatchNumbers || [];
-      for (const batch of batches) {
-        if (batch.BatchNumber === batchNumber) {
-          // For StockTransfer, check if destination matches target location
-          if (expectedDocType === 'StockTransfer') {
-            // Check if this transfer's destination is our target location
-            if (line.WarehouseCode === targetLocation.sapIntegration?.warehouseCode ||
-                line.BinAbsEntry === targetLocation.sapIntegration?.binAbsEntry) {
-              return doc;
-            }
-          } else {
-            // For PurchaseDeliveryNote, any match on batch is good
-            return doc;
-          }
+      // For StockTransfer, check if destination matches target location
+      if (expectedDocType === 'StockTransfer') {
+        if (item.toWarehouseCode === targetLocation.sapIntegration?.warehouseCode ||
+            item.toBinAbsEntry === targetLocation.sapIntegration?.binAbsEntry) {
+          return doc;
         }
+      } else {
+        // For PurchaseDeliveryNote, any match on batch is good
+        return doc;
       }
     }
   }
@@ -471,15 +463,14 @@ async function findDependencyDocument(ExternalSapDocument, itemCode, batchNumber
  * @returns {Object} Import result
  */
 async function importDocument(companyId, documentId, user) {
-  const getModel = require('../getModel');
-  const ExternalSapDocument = getModel(companyId, 'ExternalSapDocument');
-  const Producto = getModel(companyId, 'Producto');
-  const Locacion = getModel(companyId, 'Locacion');
-  const Lote = getModel(companyId, 'Lote');
-  const Inventario = getModel(companyId, 'Inventario');
-  const GoodsReceipt = getModel(companyId, 'GoodsReceipt');
-  const Consignacion = getModel(companyId, 'Consignacion');
-  const Consumo = getModel(companyId, 'Consumo');
+  const ExternalSapDocument = await getExternalSapDocumentsModel(companyId);
+  const Producto = await getProductosModel(companyId);
+  const Locacion = await getLocacionesModel(companyId);
+  const Lote = await getLotesModel(companyId);
+  const Inventario = await getInventarioModel(companyId);
+  const GoodsReceipt = await getGoodsReceiptsModel(companyId);
+  const Consignacion = await getConsignacionesModel(companyId);
+  const Consumo = await getConsumosModel(companyId);
 
   // First validate
   const validation = await validateImport(companyId, documentId);
@@ -492,28 +483,25 @@ async function importDocument(companyId, documentId, user) {
   }
 
   const doc = await ExternalSapDocument.findById(documentId);
-  const session = await mongoose.startSession();
 
   try {
-    session.startTransaction();
-
     let result;
     switch (doc.sapDocType) {
       case 'PurchaseDeliveryNote':
         result = await importPurchaseDeliveryNote(doc, {
-          Producto, Locacion, Lote, Inventario, GoodsReceipt, user, session,
+          Producto, Locacion, Lote, Inventario, GoodsReceipt, user,
         });
         break;
 
       case 'StockTransfer':
         result = await importStockTransfer(doc, {
-          Producto, Locacion, Lote, Inventario, Consignacion, user, session,
+          Producto, Locacion, Lote, Inventario, Consignacion, user,
         });
         break;
 
       case 'DeliveryNote':
         result = await importDeliveryNote(doc, {
-          Producto, Locacion, Lote, Inventario, Consumo, user, session,
+          Producto, Locacion, Lote, Inventario, Consumo, user,
         });
         break;
 
@@ -523,12 +511,11 @@ async function importDocument(companyId, documentId, user) {
 
     // Mark document as imported
     doc.status = 'IMPORTED';
-    doc.processedBy = user;
-    doc.processedAt = new Date();
-    doc.processingNotes = `Importado desde SAP. ${result.summary}`;
-    await doc.save({ session });
-
-    await session.commitTransaction();
+    doc.reviewedBy = user;
+    doc.reviewedAt = new Date();
+    doc.notes = `Importado desde SAP. ${result.summary}`;
+    doc.importedAs = result.importedAs;
+    await doc.save();
 
     return {
       success: true,
@@ -536,308 +523,434 @@ async function importDocument(companyId, documentId, user) {
       message: 'Documento importado exitosamente',
     };
   } catch (error) {
-    await session.abortTransaction();
+    console.error('Error importing document:', error);
     throw error;
-  } finally {
-    session.endSession();
   }
 }
 
 /**
  * Import PurchaseDeliveryNote (creates Lotes, updates Inventario, creates GoodsReceipt)
  */
-async function importPurchaseDeliveryNote(doc, { Producto, Locacion, Lote, Inventario, GoodsReceipt, user, session }) {
-  const lines = doc.rawData?.DocumentLines || [];
+async function importPurchaseDeliveryNote(doc, { Producto, Locacion, Lote, Inventario, GoodsReceipt, user }) {
+  const items = doc.items || [];
   const created = { lotes: 0, inventario: 0, goodsReceipt: 0 };
   const lotesCreated = [];
+  let firstLocation = null;
 
-  for (const line of lines) {
-    const product = await Producto.findOne({ sapItemCode: line.ItemCode, active: true });
-    const location = await Locacion.findOne({
-      'sapIntegration.warehouseCode': line.WarehouseCode,
-    });
+  for (const item of items) {
+    const product = await Producto.findOne({ sapItemCode: item.sapItemCode, active: true });
+    const location = await findLocationByWarehouseOrBin(Locacion, item.warehouseCode, item.binAbsEntry);
 
-    for (const batch of (line.BatchNumbers || [])) {
-      // Find or create lote
-      let lote = await Lote.findOne({
-        productId: product._id,
-        lotNumber: batch.BatchNumber,
-        currentLocationId: location._id,
-      }).session(session);
+    if (!firstLocation) firstLocation = location;
 
-      if (lote) {
-        // Update existing lote
-        lote.quantity += batch.Quantity;
-        lote.historia.push({
-          action: 'IMPORT_SAP',
-          quantity: batch.Quantity,
-          notes: `Importado desde SAP Doc ${doc.sapDocNum}`,
-          performedBy: user,
-          createdAt: new Date(),
-        });
-        await lote.save({ session });
-      } else {
-        // Create new lote
-        lote = new Lote({
-          productId: product._id,
-          lotNumber: batch.BatchNumber,
-          currentLocationId: location._id,
-          quantity: batch.Quantity,
-          expiryDate: batch.ExpiryDate ? new Date(batch.ExpiryDate) : null,
-          status: 'DISPONIBLE',
-          historia: [{
-            action: 'IMPORT_SAP',
-            quantity: batch.Quantity,
-            notes: `Importado desde SAP Doc ${doc.sapDocNum}`,
-            performedBy: user,
-            createdAt: new Date(),
-          }],
-        });
-        await lote.save({ session });
-        created.lotes++;
-      }
-
+    if (!item.batchNumber) {
+      // No batch tracking - just update inventory
+      await updateInventario(Inventario, product._id, location._id, item.quantity);
+      created.inventario++;
       lotesCreated.push({
         productId: product._id,
-        lotNumber: batch.BatchNumber,
-        quantity: batch.Quantity,
+        productName: product.name,
+        sapItemCode: item.sapItemCode,
+        lotNumber: null,
+        quantity: item.quantity,
+        loteId: null,
+        expiryDate: null,
       });
-
-      // Update inventario
-      await updateInventario(Inventario, product._id, location._id, batch.Quantity, session);
-      created.inventario++;
+      continue;
     }
+
+    // Find or create lote
+    let lote = await Lote.findOne({
+      productId: product._id,
+      lotNumber: item.batchNumber,
+      currentLocationId: location._id,
+    });
+
+    if (lote) {
+      // Update existing lote
+      lote.quantityTotal += item.quantity;
+      lote.quantityAvailable += item.quantity;
+      lote.historia.push({
+        fecha: new Date(),
+        user: user ? { _id: user._id, firstname: user.firstname, lastname: user.lastname } : null,
+        accion: 'Importación SAP',
+        detalles: `Cantidad: ${item.quantity}, SAP Doc: ${doc.sapDocNum}`,
+      });
+      await lote.save();
+    } else {
+      // Create new lote
+      lote = new Lote({
+        productId: product._id,
+        lotNumber: item.batchNumber,
+        currentLocationId: location._id,
+        quantityTotal: item.quantity,
+        quantityAvailable: item.quantity,
+        expiryDate: new Date('2099-12-31'), // Default for imports without expiry info
+        receivedDate: doc.sapDocDate || new Date(),
+        status: 'ACTIVE',
+        historia: [{
+          fecha: new Date(),
+          user: user ? { _id: user._id, firstname: user.firstname, lastname: user.lastname } : null,
+          accion: 'Lote importado desde SAP',
+          detalles: `Cantidad: ${item.quantity}, SAP Doc: ${doc.sapDocNum}`,
+        }],
+      });
+      await lote.save();
+      created.lotes++;
+    }
+
+    lotesCreated.push({
+      productId: product._id,
+      productName: product.name,
+      sapItemCode: item.sapItemCode,
+      lotNumber: item.batchNumber,
+      quantity: item.quantity,
+      loteId: lote._id,
+      expiryDate: lote.expiryDate,
+    });
+
+    // Update inventario
+    await updateInventario(Inventario, product._id, location._id, item.quantity);
+    created.inventario++;
   }
 
   // Create GoodsReceipt record
   const goodsReceipt = new GoodsReceipt({
-    date: doc.rawData?.DocDate ? new Date(doc.rawData.DocDate) : new Date(),
-    locationId: (await Locacion.findOne({ 'sapIntegration.warehouseCode': lines[0]?.WarehouseCode }))?._id,
-    supplierId: doc.rawData?.CardCode,
+    receiptDate: doc.sapDocDate || new Date(),
+    locationId: firstLocation?._id,
+    locationName: firstLocation?.name,
+    sapWarehouseCode: firstLocation?.sapIntegration?.warehouseCode,
     items: lotesCreated.map(l => ({
       productId: l.productId,
-      lotNumber: l.lotNumber,
+      productName: l.productName,
+      sapItemCode: l.sapItemCode,
+      lotNumber: l.lotNumber || 'SIN-LOTE',
       quantity: l.quantity,
+      expiryDate: l.expiryDate || new Date('2099-12-31'), // Default for imports without expiry
+      loteId: l.loteId,
     })),
     sapIntegration: {
+      pushed: true,
+      status: 'SYNCED',
       docEntry: doc.sapDocEntry,
       docNum: doc.sapDocNum,
-      status: 'SYNCED',
-      syncedAt: new Date(),
+      docType: 'PurchaseDeliveryNotes',
+      syncDate: new Date(),
+      error: null,
+      retryCount: 0,
+      retrying: false,
     },
-    status: 'RECIBIDO',
     notes: `Importado desde documento externo SAP ${doc.sapDocNum}`,
     createdBy: user,
   });
-  await goodsReceipt.save({ session });
+  await goodsReceipt.save();
   created.goodsReceipt = 1;
 
   return {
     created,
     summary: `${created.lotes} lotes creados, ${created.goodsReceipt} entrada de mercancía`,
+    importedAs: {
+      documentType: 'GoodsReceipt',
+      documentId: goodsReceipt._id,
+    },
   };
 }
 
 /**
  * Import StockTransfer (updates Lotes, creates Consignacion)
  */
-async function importStockTransfer(doc, { Producto, Locacion, Lote, Inventario, Consignacion, user, session }) {
-  const lines = doc.rawData?.StockTransferLines || [];
+async function importStockTransfer(doc, { Producto, Locacion, Lote, Inventario, Consignacion, user }) {
+  const items = doc.items || [];
   const created = { lotesUpdated: 0, lotesCreated: 0, consignacion: 0 };
-  const items = [];
+  const transferItems = [];
+  let firstFromLocation = null;
+  let firstToLocation = null;
 
-  for (const line of lines) {
-    const product = await Producto.findOne({ sapItemCode: line.ItemCode, active: true });
-    const fromLocation = await findLocationByWarehouseOrBin(Locacion, line.FromWarehouseCode, line.FromBinAbsEntry);
-    const toLocation = await findLocationByWarehouseOrBin(Locacion, line.WarehouseCode, line.BinAbsEntry);
+  for (const item of items) {
+    const product = await Producto.findOne({ sapItemCode: item.sapItemCode, active: true });
+    const fromLocation = await findLocationByWarehouseOrBin(Locacion, item.fromWarehouseCode, item.fromBinAbsEntry);
+    const toLocation = await findLocationByWarehouseOrBin(Locacion, item.toWarehouseCode, item.toBinAbsEntry);
 
-    for (const batch of (line.BatchNumbers || [])) {
-      // Reduce from source
-      const sourceLote = await Lote.findOne({
+    if (!firstFromLocation) firstFromLocation = fromLocation;
+    if (!firstToLocation) firstToLocation = toLocation;
+
+    if (!item.batchNumber) {
+      // No batch tracking - just update inventory
+      // Source: only decrease available (total stays same)
+      await Inventario.findOneAndUpdate(
+        { productId: product._id, locationId: fromLocation._id },
+        {
+          $inc: { quantityAvailable: -item.quantity },
+          $set: { lastMovementDate: new Date() },
+        },
+        { upsert: true }
+      );
+      // Destination: increase both total and available (new stock)
+      await updateInventario(Inventario, product._id, toLocation._id, item.quantity);
+      transferItems.push({
         productId: product._id,
-        lotNumber: batch.BatchNumber,
-        currentLocationId: fromLocation._id,
-      }).session(session);
-
-      sourceLote.quantity -= batch.Quantity;
-      sourceLote.historia.push({
-        action: 'TRANSFER_OUT_SAP',
-        quantity: -batch.Quantity,
-        toLocationId: toLocation._id,
-        notes: `Traslado importado desde SAP Doc ${doc.sapDocNum}`,
-        performedBy: user,
-        createdAt: new Date(),
+        lotNumber: null,
+        quantity: item.quantity,
+        destLoteId: null,
       });
-      await sourceLote.save({ session });
-      created.lotesUpdated++;
-
-      // Add to destination
-      let destLote = await Lote.findOne({
-        productId: product._id,
-        lotNumber: batch.BatchNumber,
-        currentLocationId: toLocation._id,
-      }).session(session);
-
-      if (destLote) {
-        destLote.quantity += batch.Quantity;
-        destLote.historia.push({
-          action: 'TRANSFER_IN_SAP',
-          quantity: batch.Quantity,
-          fromLocationId: fromLocation._id,
-          notes: `Traslado importado desde SAP Doc ${doc.sapDocNum}`,
-          performedBy: user,
-          createdAt: new Date(),
-        });
-        await destLote.save({ session });
-        created.lotesUpdated++;
-      } else {
-        destLote = new Lote({
-          productId: product._id,
-          lotNumber: batch.BatchNumber,
-          currentLocationId: toLocation._id,
-          quantity: batch.Quantity,
-          expiryDate: sourceLote.expiryDate,
-          status: 'DISPONIBLE',
-          historia: [{
-            action: 'TRANSFER_IN_SAP',
-            quantity: batch.Quantity,
-            fromLocationId: fromLocation._id,
-            notes: `Traslado importado desde SAP Doc ${doc.sapDocNum}`,
-            performedBy: user,
-            createdAt: new Date(),
-          }],
-        });
-        await destLote.save({ session });
-        created.lotesCreated++;
-      }
-
-      // Update inventario for both locations
-      await updateInventario(Inventario, product._id, fromLocation._id, -batch.Quantity, session);
-      await updateInventario(Inventario, product._id, toLocation._id, batch.Quantity, session);
-
-      items.push({
-        productId: product._id,
-        lotNumber: batch.BatchNumber,
-        quantity: batch.Quantity,
-      });
+      continue;
     }
+
+    // Reduce from source
+    const sourceLote = await Lote.findOne({
+      productId: product._id,
+      lotNumber: item.batchNumber,
+      currentLocationId: fromLocation._id,
+    });
+
+    // Source lote: decrease available only (total stays same, it's "total ever received")
+    sourceLote.quantityAvailable -= item.quantity;
+    sourceLote.historia.push({
+      fecha: new Date(),
+      user: user ? { _id: user._id, firstname: user.firstname, lastname: user.lastname } : null,
+      accion: 'Traslado salida (SAP)',
+      detalles: `Cantidad: -${item.quantity}, Destino: ${toLocation.name}, SAP Doc: ${doc.sapDocNum}`,
+    });
+    await sourceLote.save();
+    created.lotesUpdated++;
+
+    // Add to destination
+    let destLote = await Lote.findOne({
+      productId: product._id,
+      lotNumber: item.batchNumber,
+      currentLocationId: toLocation._id,
+    });
+
+    if (destLote) {
+      destLote.quantityTotal += item.quantity;
+      destLote.quantityAvailable += item.quantity;
+      destLote.historia.push({
+        fecha: new Date(),
+        user: user ? { _id: user._id, firstname: user.firstname, lastname: user.lastname } : null,
+        accion: 'Traslado entrada (SAP)',
+        detalles: `Cantidad: +${item.quantity}, Origen: ${fromLocation.name}, SAP Doc: ${doc.sapDocNum}`,
+      });
+      await destLote.save();
+      created.lotesUpdated++;
+    } else {
+      destLote = new Lote({
+        productId: product._id,
+        lotNumber: item.batchNumber,
+        currentLocationId: toLocation._id,
+        quantityTotal: item.quantity,
+        quantityAvailable: item.quantity,
+        expiryDate: sourceLote.expiryDate,
+        receivedDate: doc.sapDocDate || new Date(),
+        status: 'ACTIVE',
+        historia: [{
+          fecha: new Date(),
+          user: user ? { _id: user._id, firstname: user.firstname, lastname: user.lastname } : null,
+          accion: 'Lote recibido por traslado (SAP)',
+          detalles: `Cantidad: ${item.quantity}, Origen: ${fromLocation.name}, SAP Doc: ${doc.sapDocNum}`,
+        }],
+      });
+      await destLote.save();
+      created.lotesCreated++;
+    }
+
+    // Update inventario for both locations
+    // Source: only decrease available (total stays same)
+    await Inventario.findOneAndUpdate(
+      { productId: product._id, locationId: fromLocation._id },
+      {
+        $inc: { quantityAvailable: -item.quantity },
+        $set: { lastMovementDate: new Date() },
+      },
+      { upsert: true }
+    );
+    // Destination: increase both total and available (new stock)
+    await updateInventario(Inventario, product._id, toLocation._id, item.quantity);
+
+    transferItems.push({
+      productId: product._id,
+      lotNumber: item.batchNumber,
+      quantity: item.quantity,
+      destLoteId: destLote._id,
+    });
   }
 
   // Create Consignacion record
-  const fromLocation = await findLocationByWarehouseOrBin(Locacion, lines[0]?.FromWarehouseCode, lines[0]?.FromBinAbsEntry);
-  const toLocation = await findLocationByWarehouseOrBin(Locacion, lines[0]?.WarehouseCode, lines[0]?.BinAbsEntry);
+  // Filter to only items with loteId (required by schema)
+  const itemsWithLote = transferItems.filter(i => i.destLoteId);
+
+  if (itemsWithLote.length === 0) {
+    // No batch-tracked items to record
+    return {
+      created,
+      summary: `${created.lotesUpdated} lotes actualizados, ${created.lotesCreated} lotes creados (no consignación - sin lotes)`,
+      importedAs: null,
+    };
+  }
 
   const consignacion = new Consignacion({
-    date: doc.rawData?.DocDate ? new Date(doc.rawData.DocDate) : new Date(),
-    fromLocationId: fromLocation?._id,
-    toLocationId: toLocation?._id,
-    items: items.map(i => ({
+    fromLocationId: firstFromLocation?._id,
+    toLocationId: firstToLocation?._id,
+    items: itemsWithLote.map(i => ({
       productId: i.productId,
+      loteId: i.destLoteId, // Reference to destination lote
       lotNumber: i.lotNumber,
-      quantity: i.quantity,
+      quantitySent: i.quantity,
+      quantityReceived: i.quantity, // Already received for imported docs
     })),
     sapIntegration: {
+      pushed: true,
+      status: 'SYNCED',
       docEntry: doc.sapDocEntry,
       docNum: doc.sapDocNum,
-      status: 'SYNCED',
-      syncedAt: new Date(),
+      docType: 'StockTransfers',
+      syncDate: new Date(),
+      error: null,
+      retryCount: 0,
+      retrying: false,
     },
     status: 'RECIBIDO',
+    confirmedAt: new Date(),
     notes: `Importado desde documento externo SAP ${doc.sapDocNum}`,
     createdBy: user,
   });
-  await consignacion.save({ session });
+  await consignacion.save();
   created.consignacion = 1;
 
   return {
     created,
     summary: `${created.lotesUpdated} lotes actualizados, ${created.lotesCreated} lotes creados, ${created.consignacion} consignación`,
+    importedAs: {
+      documentType: 'Consignacion',
+      documentId: consignacion._id,
+    },
   };
 }
 
 /**
  * Import DeliveryNote (reduces Lotes, creates Consumo)
  */
-async function importDeliveryNote(doc, { Producto, Locacion, Lote, Inventario, Consumo, user, session }) {
-  const lines = doc.rawData?.DocumentLines || [];
+async function importDeliveryNote(doc, { Producto, Locacion, Lote, Inventario, Consumo, user }) {
+  const items = doc.items || [];
   const created = { lotesUpdated: 0, consumo: 0 };
-  const items = [];
+  const consumoItems = [];
+  let firstLocation = null;
 
-  for (const line of lines) {
-    const product = await Producto.findOne({ sapItemCode: line.ItemCode, active: true });
-    const location = await findLocationByWarehouseOrBin(Locacion, line.WarehouseCode, line.BinAbsEntry);
+  for (const item of items) {
+    const product = await Producto.findOne({ sapItemCode: item.sapItemCode, active: true });
+    const location = await findLocationByWarehouseOrBin(Locacion, item.warehouseCode, item.binAbsEntry);
 
-    for (const batch of (line.BatchNumbers || [])) {
-      const lote = await Lote.findOne({
+    if (!firstLocation) firstLocation = location;
+
+    if (!item.batchNumber) {
+      // No batch tracking - just update inventory (consumption)
+      await Inventario.findOneAndUpdate(
+        { productId: product._id, locationId: location._id },
+        {
+          $inc: { quantityAvailable: -item.quantity, quantityConsumed: item.quantity },
+          $set: { lastMovementDate: new Date(), lastConsumedDate: new Date() },
+        },
+        { upsert: true }
+      );
+      consumoItems.push({
         productId: product._id,
-        lotNumber: batch.BatchNumber,
-        currentLocationId: location._id,
-      }).session(session);
-
-      lote.quantity -= batch.Quantity;
-      lote.historia.push({
-        action: 'CONSUMPTION_SAP',
-        quantity: -batch.Quantity,
-        notes: `Consumo importado desde SAP Doc ${doc.sapDocNum}`,
-        performedBy: user,
-        createdAt: new Date(),
+        sapItemCode: item.sapItemCode,
+        productName: product.name,
+        loteId: null,
+        lotNumber: null,
+        quantity: item.quantity,
       });
-      await lote.save({ session });
-      created.lotesUpdated++;
-
-      // Update inventario
-      await updateInventario(Inventario, product._id, location._id, -batch.Quantity, session);
-
-      items.push({
-        productId: product._id,
-        lotNumber: batch.BatchNumber,
-        quantity: batch.Quantity,
-      });
+      continue;
     }
+
+    const lote = await Lote.findOne({
+      productId: product._id,
+      lotNumber: item.batchNumber,
+      currentLocationId: location._id,
+    });
+
+    // Consumption: decrease available, increase consumed (total stays same)
+    lote.quantityAvailable -= item.quantity;
+    lote.quantityConsumed = (lote.quantityConsumed || 0) + item.quantity;
+    lote.historia.push({
+      fecha: new Date(),
+      user: user ? { _id: user._id, firstname: user.firstname, lastname: user.lastname } : null,
+      accion: 'Consumo (SAP)',
+      detalles: `Cantidad: -${item.quantity}, SAP Doc: ${doc.sapDocNum}`,
+    });
+    await lote.save();
+    created.lotesUpdated++;
+
+    // Update inventario (special handling for consumption)
+    await Inventario.findOneAndUpdate(
+      { productId: product._id, locationId: location._id },
+      {
+        $inc: { quantityAvailable: -item.quantity, quantityConsumed: item.quantity },
+        $set: { lastMovementDate: new Date(), lastConsumedDate: new Date() },
+      },
+      { upsert: true }
+    );
+
+    consumoItems.push({
+      productId: product._id,
+      sapItemCode: item.sapItemCode,
+      productName: product.name,
+      loteId: lote._id,
+      lotNumber: item.batchNumber,
+      quantity: item.quantity,
+    });
   }
 
   // Create Consumo record
-  const location = await findLocationByWarehouseOrBin(Locacion, lines[0]?.WarehouseCode, lines[0]?.BinAbsEntry);
-
   const consumo = new Consumo({
-    date: doc.rawData?.DocDate ? new Date(doc.rawData.DocDate) : new Date(),
-    locationId: location?._id,
-    patientId: doc.rawData?.U_PatientId,
-    items: items.map(i => ({
+    centroId: firstLocation?._id,
+    centroName: firstLocation?.name,
+    sapCardCode: firstLocation?.sapIntegration?.cardCode,
+    items: consumoItems.map(i => ({
       productId: i.productId,
-      lotNumber: i.lotNumber,
+      sapItemCode: i.sapItemCode,
+      productName: i.productName,
+      loteId: i.loteId,
+      lotNumber: i.lotNumber || 'SIN-LOTE',
       quantity: i.quantity,
     })),
     sapIntegration: {
+      pushed: true,
       docEntry: doc.sapDocEntry,
       docNum: doc.sapDocNum,
-      status: 'SYNCED',
-      syncedAt: new Date(),
+      docType: 'DeliveryNotes',
+      syncDate: new Date(),
+      error: null,
+      retryCount: 0,
+      retrying: false,
     },
     status: 'SYNCED',
     notes: `Importado desde documento externo SAP ${doc.sapDocNum}`,
     createdBy: user,
   });
-  await consumo.save({ session });
+  await consumo.save();
   created.consumo = 1;
 
   return {
     created,
     summary: `${created.lotesUpdated} lotes actualizados, ${created.consumo} consumo`,
+    importedAs: {
+      documentType: 'Consumo',
+      documentId: consumo._id,
+    },
   };
 }
 
 /**
  * Update inventario aggregation
  */
-async function updateInventario(Inventario, productId, locationId, quantityChange, session) {
+async function updateInventario(Inventario, productId, locationId, quantityChange) {
   await Inventario.findOneAndUpdate(
     { productId, locationId },
     {
-      $inc: { 'quantities.available': quantityChange, 'quantities.total': quantityChange },
-      $set: { lastUpdated: new Date() },
+      $inc: { quantityAvailable: quantityChange, quantityTotal: quantityChange },
+      $set: { lastMovementDate: new Date() },
     },
-    { upsert: true, session }
+    { upsert: true }
   );
 }
 

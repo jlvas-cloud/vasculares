@@ -23,9 +23,12 @@ const externalSapDocumentSchema = new mongoose.Schema({
     productName: String,
     batchNumber: String,
     quantity: { type: Number, required: true },
+    // For PurchaseDeliveryNote and DeliveryNote (single location)
+    warehouseCode: String,
+    binAbsEntry: Number,
+    // For StockTransfer (source and destination)
     fromWarehouseCode: String,
     toWarehouseCode: String,
-    // For bin allocations
     fromBinAbsEntry: Number,
     toBinAbsEntry: Number,
   }],
