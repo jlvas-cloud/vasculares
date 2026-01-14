@@ -80,4 +80,14 @@ function onListening() {
     : 'port ' + addr.port;
   console.log('🚀 Vasculares API listening on ' + bind);
   console.log('📍 Environment:', process.env.NODE_ENV || 'development');
+
+  // Start scheduled jobs
+  if (process.env.ENABLE_CRON_JOBS !== 'false') {
+    try {
+      const nightlyReconciliation = require('../jobs/nightlyReconciliation');
+      nightlyReconciliation.start();
+    } catch (error) {
+      console.error('Failed to start nightly reconciliation job:', error.message);
+    }
+  }
 }

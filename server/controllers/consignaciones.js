@@ -762,6 +762,207 @@ exports.confirm = async (req, res, next) => {
 };
 
 /**
+ * POST /api/consignaciones/preview-fifo
+ * Preview FIFO lot allocation without committing
+ *
+ * For items without explicit lot selection, this returns which lots would be selected
+ * using FIFO (First In First Out) based on expiry date.
+ * Frontend can then validate these lots against SAP before creating consignment.
+ */
+exports.previewFifo = async (req, res, next) => {
+  try {
+    const { fromLocationId, items } = req.body;
+
+    if (!fromLocationId) {
+      return res.status(400).json({ error: 'fromLocationId is required' });
+    }
+
+    if (!items || !Array.isArray(items) || items.length === 0) {
+      return res.status(400).json({ error: 'items array is required' });
+    }
+
+    const Locaciones = await getLocacionesModel(req.companyId);
+    const Productos = await getProductosModel(req.companyId);
+    const Lotes = await getLotesModel(req.companyId);
+
+    const fromLocation = await Locaciones.findById(fromLocationId).lean();
+    if (!fromLocation) {
+      return res.status(404).json({ error: 'Source location not found' });
+    }
+
+    const allocatedItems = [];
+
+    for (const item of items) {
+      // Get product info
+      const product = await Productos.findById(item.productId).lean();
+      if (!product) {
+        continue;
+      }
+
+      // If item already has lotNumber, just pass through
+      if (item.lotNumber) {
+        allocatedItems.push({
+          productId: item.productId,
+          productName: product.name,
+          sapItemCode: product.sapItemCode,
+          lotNumber: item.lotNumber,
+          loteId: item.loteId,
+          quantitySent: item.quantitySent,
+          allocationType: 'explicit',
+        });
+        continue;
+      }
+
+      // FIFO allocation: find lots sorted by expiry date
+      const availableLots = await Lotes.find({
+        productId: item.productId,
+        currentLocationId: fromLocationId,
+        quantityAvailable: { $gt: 0 },
+        status: 'ACTIVE',
+      })
+        .sort({ expiryDate: 1 }) // FEFO - First Expiry First Out
+        .lean();
+
+      let remainingQty = item.quantitySent;
+
+      for (const lot of availableLots) {
+        if (remainingQty <= 0) break;
+
+        const allocateQty = Math.min(remainingQty, lot.quantityAvailable);
+        allocatedItems.push({
+          productId: item.productId,
+          productName: product.name,
+          sapItemCode: product.sapItemCode,
+          lotNumber: lot.lotNumber,
+          loteId: lot._id.toString(),
+          quantitySent: allocateQty,
+          expiryDate: lot.expiryDate,
+          allocationType: 'fifo',
+        });
+        remainingQty -= allocateQty;
+      }
+
+      // If we couldn't allocate full quantity
+      if (remainingQty > 0) {
+        return res.status(400).json({
+          error: `Insufficient stock for ${product.name}. Requested: ${item.quantitySent}, Available: ${item.quantitySent - remainingQty}`,
+          productId: item.productId,
+        });
+      }
+    }
+
+    res.json({
+      success: true,
+      items: allocatedItems,
+      message: `${allocatedItems.length} items allocated`,
+    });
+  } catch (error) {
+    console.error('Error previewing FIFO allocation:', error);
+    next(error);
+  }
+};
+
+/**
+ * POST /api/consignaciones/validate-sap-stock
+ * Pre-operation guard: Verify SAP has sufficient stock before creating consignment
+ *
+ * This validates that each batch exists in SAP at the source warehouse with sufficient quantity.
+ * If SAP is unreachable or returns errors, the validation fails (strict mode).
+ */
+exports.validateSapStock = async (req, res, next) => {
+  try {
+    const { fromLocationId, items } = req.body;
+
+    if (!fromLocationId) {
+      return res.status(400).json({ error: 'fromLocationId is required' });
+    }
+
+    if (!items || !Array.isArray(items) || items.length === 0) {
+      return res.status(400).json({ error: 'items array is required' });
+    }
+
+    // Get source location SAP config
+    const Locaciones = await getLocacionesModel(req.companyId);
+    const Productos = await getProductosModel(req.companyId);
+    const fromLocation = await Locaciones.findById(fromLocationId).lean();
+
+    if (!fromLocation) {
+      return res.status(404).json({ error: 'Source location not found' });
+    }
+
+    if (!fromLocation.sapIntegration?.warehouseCode) {
+      return res.status(400).json({
+        error: 'Source location has no SAP warehouse configuration',
+        skipValidation: true, // Frontend can decide to proceed without validation
+      });
+    }
+
+    // Build items to validate
+    const validationItems = [];
+    for (const item of items) {
+      // Get product SAP code
+      const product = await Productos.findById(item.productId).lean();
+      if (!product?.sapItemCode) {
+        continue; // Skip products without SAP code
+      }
+
+      validationItems.push({
+        itemCode: product.sapItemCode,
+        batchNumber: item.lotNumber,
+        quantity: item.quantitySent,
+        productId: item.productId,
+        productName: product.name,
+        productCode: product.code,
+      });
+    }
+
+    if (validationItems.length === 0) {
+      // No items with SAP codes to validate
+      return res.json({
+        valid: true,
+        message: 'No items with SAP codes to validate',
+        skipValidation: true,
+      });
+    }
+
+    // Call SAP verification
+    const validationResult = await sapService.verifyBatchStockForTransfer(
+      validationItems,
+      fromLocation.sapIntegration.warehouseCode,
+      null // No bin for source warehouse (warehouse 01)
+    );
+
+    // Enrich mismatches with product info
+    const enrichedMismatches = validationResult.mismatches.map((mismatch) => {
+      const item = validationItems.find((i) => i.batchNumber === mismatch.batchNumber);
+      return {
+        ...mismatch,
+        productName: item?.productName || 'Unknown',
+        productCode: item?.productCode || 'Unknown',
+      };
+    });
+
+    res.json({
+      valid: validationResult.valid,
+      mismatches: enrichedMismatches,
+      errors: validationResult.errors,
+      verified: validationResult.verified.length,
+      message: validationResult.valid
+        ? 'All items verified in SAP'
+        : 'Stock mismatch detected - SAP has different quantities than expected',
+    });
+  } catch (error) {
+    console.error('Error validating SAP stock:', error);
+    // On SAP connection errors, we return error but allow frontend to decide
+    res.status(500).json({
+      valid: false,
+      error: `SAP verification failed: ${error.message}`,
+      sapUnavailable: true,
+    });
+  }
+};
+
+/**
  * POST /api/consignaciones/:id/retry-sap
  * Retry SAP stock transfer for a failed consignment
  *

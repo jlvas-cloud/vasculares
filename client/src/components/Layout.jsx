@@ -1,7 +1,7 @@
 import { Link, useLocation } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { Button } from './ui/button';
-import { Package, MapPin, LogOut, Home, Boxes, History, BarChart3, Truck, PackagePlus, FileBox, Activity, ClipboardList } from 'lucide-react';
+import { Package, MapPin, LogOut, Home, Boxes, History, BarChart3, Truck, PackagePlus, FileBox, Activity, ClipboardList, RefreshCw } from 'lucide-react';
 
 export default function Layout({ children }) {
   const { user, company, logout } = useAuth();
@@ -27,6 +27,9 @@ export default function Layout({ children }) {
     { name: 'Productos', href: '/products', icon: Package },
     { name: 'Locaciones', href: '/locations', icon: MapPin },
     { name: 'Transacciones', href: '/transactions', icon: History },
+
+    { type: 'header', name: 'Admin' },
+    { name: 'Reconciliación SAP', href: '/reconciliation', icon: RefreshCw },
   ];
 
   return (

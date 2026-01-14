@@ -32,6 +32,13 @@ const validateConfirm = [
 
 // Routes
 router.get('/', consignacionesController.list);
+
+// Preview FIFO allocation (for items without explicit lot selection)
+router.post('/preview-fifo', consignacionesController.previewFifo);
+
+// Pre-operation guard: validate SAP stock before creating (must be before /:id routes)
+router.post('/validate-sap-stock', consignacionesController.validateSapStock);
+
 router.get('/:id', consignacionesController.getOne);
 router.post('/', validateCreate, consignacionesController.create);
 router.put('/:id/confirm', validateConfirm, consignacionesController.confirm);

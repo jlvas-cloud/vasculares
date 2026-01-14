@@ -127,3 +127,139 @@ Before creating a goods receipt, the system now validates each batch against SAP
    - Blocks creation until user corrects selection
 
 **Result:** Prevents "No matching records found (ODBC -2028)" SAP errors by catching mismatches early.
+
+---
+
+## SAP Reconciliation System - COMPLETE
+
+**Documented:** 2026-01-13
+**Status:** IMPLEMENTED (2026-01-13)
+**Design Doc:** `docs/sap-reconciliation-design.md`
+
+**Problem:** Users can make movements directly in SAP that bypass our app, causing drift between local database and SAP.
+
+**Solution:** Two complementary mechanisms:
+
+### 1. Pre-Operation Guard (Real-Time Protection)
+
+Before any stock movement, verify with SAP that the batch/quantity exists.
+
+| Operation | Check |
+|-----------|-------|
+| Consignment | Verify batch exists in SAP source warehouse with sufficient qty |
+| Consumption | Verify batch exists in SAP centro location with sufficient qty |
+
+**On mismatch:** Block operation, show warning with SAP's actual quantity.
+
+### 2. Document Reconciliation (Audit/Visibility)
+
+Check SAP for documents involving our products that weren't created by our app.
+
+| Trigger | Frequency |
+|---------|-----------|
+| Nightly job | Once per night |
+| On-demand | Admin clicks "Verificar SAP" button |
+
+**Documents checked:** PurchaseDeliveryNotes, StockTransfers, DeliveryNotes
+
+**Output:** Dashboard showing external documents for admin review with actions: Acknowledge, Import, Ignore.
+
+### Implementation Status
+
+| Phase | Feature | Status |
+|-------|---------|--------|
+| 1 | Pre-op guard for Consignment | **COMPLETE** (2026-01-13) |
+| 2 | Pre-op guard for Consumption | **COMPLETE** (2026-01-13) |
+| 3 | Document reconciliation service + nightly job | **COMPLETE** (2026-01-13) |
+| 4 | On-demand reconciliation API + Admin dashboard UI | **COMPLETE** (2026-01-13) |
+
+### Phase 1 & 2: Pre-Operation Guards - COMPLETE
+
+**Backend Implementation:**
+- `services/sapService.js`:
+  - `verifyBatchStockAtLocation(itemCode, batchNumber, warehouseCode, binAbsEntry)` - Query OIBT/OBBQ
+  - `verifyBatchStockForTransfer(items, sourceWarehouse, sourceBinAbsEntry)` - Validate multiple batches
+  - `executeSQLQuery(queryCode, queryName, sqlText)` - Generic SQL execution helper
+- `controllers/consignaciones.js` - Added `validateSapStock` endpoint
+- `controllers/consumption.js` - Added `validateSapStock` endpoint
+- `routes/consignaciones.js` - Added `POST /validate-sap-stock`
+- `routes/consumption.js` - Added `POST /validate-sap-stock`
+
+**Frontend Implementation:**
+- `lib/api.js`:
+  - `consignacionesApi.validateSapStock(data)`
+  - `consumptionApi.validateSapStock(data)`
+- `pages/Planning.jsx` - Validates before creating consignment, shows mismatch dialog
+- `pages/Consumption.jsx` - Validates before creating consumption, shows mismatch dialog
+
+**Behavior:**
+- Before any stock movement (consignment or consumption), queries SAP OIBT/OBBQ
+- Verifies batch exists at source location with sufficient quantity
+- If mismatch: Blocks operation, shows detailed dialog with SAP's actual quantities
+- If SAP unreachable: Blocks operation (strict mode)
+- User must adjust quantities or investigate before proceeding
+
+### Phase 3: Document Reconciliation Service + Nightly Job - COMPLETE
+
+**Files Created:**
+- `models/externalSapDocumentModel.js` - Tracks external SAP documents
+- `models/reconciliationRunModel.js` - Tracks reconciliation runs
+- `services/reconciliationService.js` - Core reconciliation logic
+- `jobs/nightlyReconciliation.js` - Cron job for nightly runs
+
+**Backend Implementation:**
+- `services/sapService.js`:
+  - `getRecentPurchaseDeliveryNotes(since, itemCodes)` - Query PurchaseDeliveryNotes
+  - `getRecentStockTransfers(since, itemCodes)` - Query StockTransfers
+  - `getRecentDeliveryNotes(since, itemCodes)` - Query DeliveryNotes
+- `services/reconciliationService.js`:
+  - `runReconciliation(companyId, options)` - Main reconciliation logic
+  - `getPendingExternalDocuments(companyId)` - Get external docs for review
+  - `updateExternalDocumentStatus(companyId, docId, status, user, notes)` - Update status
+
+**Nightly Job:**
+- Schedule: 2:00 AM daily (configurable via `RECONCILIATION_CRON` env var)
+- Lookback: 24 hours (configurable via `RECONCILIATION_LOOKBACK_HOURS`)
+- Auto-starts on server startup (disable with `ENABLE_CRON_JOBS=false`)
+
+**Manual Run:**
+```bash
+node jobs/nightlyReconciliation.js --run-now
+node jobs/nightlyReconciliation.js --run-now --company-id=<id>
+```
+
+### Phase 4: On-Demand API + Admin Dashboard - COMPLETE
+
+**API Endpoints:**
+- `POST /api/reconciliation/run` - Trigger on-demand reconciliation
+- `GET /api/reconciliation/status` - Get latest run + pending count
+- `GET /api/reconciliation/runs` - Get run history
+- `GET /api/reconciliation/external-documents` - Get external docs (filtered by status)
+- `PUT /api/reconciliation/external-documents/:id/status` - Update doc status
+
+**Files Created:**
+- `controllers/reconciliation.js` - API controller
+- `routes/reconciliation.js` - API routes
+
+**Frontend:**
+- `lib/api.js` - Added `reconciliationApi` with all endpoints
+- `pages/Reconciliation.jsx` - Admin dashboard with:
+  - Status cards (last run, pending count, docs checked)
+  - "Verificar Ahora" button for on-demand reconciliation
+  - External documents list with filtering by status
+  - Actions: Acknowledge, Ignore (with notes)
+  - Run history table
+- `components/Layout.jsx` - Added navigation link under Admin section
+
+**Document Statuses:**
+| Status | Description |
+|--------|-------------|
+| PENDING_REVIEW | Newly detected, needs review |
+| ACKNOWLEDGED | Reviewed, not imported |
+| IMPORTED | Imported into local system |
+| IGNORED | Marked as not relevant |
+
+**Dependency Added:**
+- `node-cron@^3.0.3` - For scheduling nightly jobs
+
+---

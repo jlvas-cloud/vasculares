@@ -514,6 +514,113 @@ exports.getOne = async (req, res, next) => {
 };
 
 /**
+ * POST /api/consumption/validate-sap-stock
+ * Pre-operation guard: Verify SAP has sufficient stock at Centro before creating consumption
+ *
+ * This validates that each batch exists in SAP at the centro's bin location with sufficient quantity.
+ * If SAP is unreachable or returns errors, the validation fails (strict mode).
+ */
+exports.validateSapStock = async (req, res, next) => {
+  try {
+    const { centroId, items } = req.body;
+
+    if (!centroId) {
+      return res.status(400).json({ error: 'centroId is required' });
+    }
+
+    if (!items || !Array.isArray(items) || items.length === 0) {
+      return res.status(400).json({ error: 'items array is required' });
+    }
+
+    // Get centro SAP config
+    const Locaciones = await getLocacionesModel(req.companyId);
+    const Productos = await getProductosModel(req.companyId);
+    const Lotes = await getLotesModel(req.companyId);
+    const centro = await Locaciones.findById(centroId).lean();
+
+    if (!centro) {
+      return res.status(404).json({ error: 'Centro not found' });
+    }
+
+    if (!centro.sapIntegration?.warehouseCode) {
+      return res.status(400).json({
+        error: 'Centro has no SAP warehouse configuration',
+        skipValidation: true,
+      });
+    }
+
+    // Build items to validate
+    const validationItems = [];
+    for (const item of items) {
+      // Get lote to find product and lot number
+      const lote = await Lotes.findById(item.loteId).lean();
+      if (!lote) {
+        continue; // Skip invalid lotes
+      }
+
+      // Get product SAP code
+      const product = await Productos.findById(item.productId || lote.productId).lean();
+      if (!product?.sapItemCode) {
+        continue; // Skip products without SAP code
+      }
+
+      validationItems.push({
+        itemCode: product.sapItemCode,
+        batchNumber: lote.lotNumber,
+        quantity: item.quantity,
+        productId: product._id.toString(),
+        productName: product.name,
+        productCode: product.code,
+        loteId: item.loteId,
+      });
+    }
+
+    if (validationItems.length === 0) {
+      return res.json({
+        valid: true,
+        message: 'No items with SAP codes to validate',
+        skipValidation: true,
+      });
+    }
+
+    // Call SAP verification - for centro, use bin location
+    const validationResult = await sapService.verifyBatchStockForTransfer(
+      validationItems,
+      centro.sapIntegration.warehouseCode,
+      centro.sapIntegration.binAbsEntry // Bin for this centro
+    );
+
+    // Enrich mismatches with product info
+    const enrichedMismatches = validationResult.mismatches.map((mismatch) => {
+      const item = validationItems.find((i) => i.batchNumber === mismatch.batchNumber);
+      return {
+        ...mismatch,
+        productName: item?.productName || 'Unknown',
+        productCode: item?.productCode || 'Unknown',
+        loteId: item?.loteId || null,
+      };
+    });
+
+    res.json({
+      valid: validationResult.valid,
+      mismatches: enrichedMismatches,
+      errors: validationResult.errors,
+      verified: validationResult.verified.length,
+      message: validationResult.valid
+        ? 'All items verified in SAP'
+        : 'Stock mismatch detected - SAP has different quantities than expected',
+    });
+  } catch (error) {
+    console.error('Error validating SAP stock for consumption:', error);
+    res.status(500).json({
+      valid: false,
+      error: `SAP verification failed: ${error.message}`,
+      sapUnavailable: true,
+    });
+  }
+};
+
+/**
  * POST /api/consumption/:id/retry-sap
  * Retry SAP sync for a failed consumption
  *

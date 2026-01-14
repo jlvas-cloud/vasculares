@@ -36,6 +36,7 @@ const productoSchema = require('../models/productoModel');
 const loteSchema = require('../models/loteModel');
 const inventarioSchema = require('../models/inventarioModel');
 const locacionSchema = require('../models/locacionModel');
+const vascularesConfigSchema = require('../models/vascularesConfigModel');
 
 // Import sync service
 const sapSyncService = require('../services/sapSyncService');
@@ -361,6 +362,40 @@ async function main() {
 
     stats.locationsProcessed++;
     console.log(`  → Found ${locationBatchCount} batches at ${location.name}`);
+  }
+
+  // Set goLiveDate for reconciliation (only on actual sync, not dry run)
+  if (!DRY_RUN && stats.batchesFound > 0) {
+    try {
+      const VascularesConfig = db.model('vascularesconfig', vascularesConfigSchema);
+      const companyObjectId = new mongoose.Types.ObjectId(COMPANY_ID);
+
+      // Check if goLiveDate already exists
+      const existingConfig = await VascularesConfig.findOne({ companyId: companyObjectId });
+
+      if (!existingConfig || !existingConfig.reconciliation?.goLiveDate) {
+        // Set goLiveDate to now (first sync)
+        await VascularesConfig.findOneAndUpdate(
+          { companyId: companyObjectId },
+          {
+            $set: {
+              'reconciliation.goLiveDate': new Date(),
+              'reconciliation.goLiveDateSetBy': {
+                type: 'SYNC_SCRIPT',
+                setAt: new Date(),
+              },
+            },
+          },
+          { upsert: true, new: true }
+        );
+        console.log('\n✓ Set reconciliation goLiveDate to: ' + new Date().toISOString());
+      } else {
+        console.log('\n✓ Reconciliation goLiveDate already set: ' + existingConfig.reconciliation.goLiveDate.toISOString());
+      }
+    } catch (error) {
+      console.error('\n⚠ Failed to set goLiveDate:', error.message);
+      stats.errors.push({ phase: 'goLiveDate', message: error.message });
+    }
   }
 
   // Summary

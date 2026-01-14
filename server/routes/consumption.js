@@ -26,6 +26,9 @@ router.get('/inventory/:centroId', consumptionController.getAvailableInventory);
 // Extract consumption data from documents
 router.post('/extract', packingListUpload, handleUploadError, consumptionController.extractFromDocument);
 
+// Pre-operation guard: validate SAP stock before creating consumption
+router.post('/validate-sap-stock', consumptionController.validateSapStock);
+
 // Create consumption
 router.post('/', validateConsumption, consumptionController.create);
 

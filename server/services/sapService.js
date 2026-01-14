@@ -582,6 +582,468 @@ async function validateBatchItems(items) {
   return results;
 }
 
+/**
+ * Execute a SQL query via SAP Service Layer SQLQueries endpoint
+ * Creates the query if it doesn't exist, then executes it
+ *
+ * @param {string} queryCode - Unique identifier for the query
+ * @param {string} queryName - Display name
+ * @param {string} sqlText - SQL query text
+ * @returns {Promise<Array>} Query results
+ */
+const createdQueries = new Set();
+
+async function executeSQLQuery(queryCode, queryName, sqlText) {
+  await ensureSession();
+  const baseUrl = SAP_CONFIG.serviceUrl;
+
+  const headers = {
+    'Content-Type': 'application/json',
+    'Cookie': `B1SESSION=${sessionId}`,
+  };
+
+  // Create query if not already created this session
+  if (!createdQueries.has(queryCode)) {
+    try {
+      const createResponse = await fetch(`${baseUrl}/SQLQueries`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          SqlCode: queryCode,
+          SqlName: queryName,
+          SqlText: sqlText,
+        }),
+      });
+
+      if (createResponse.ok) {
+        createdQueries.add(queryCode);
+      } else {
+        // Query might already exist from previous session, that's OK
+        createdQueries.add(queryCode);
+      }
+    } catch (err) {
+      // Continue anyway - query might exist
+      createdQueries.add(queryCode);
+    }
+  }
+
+  // Execute the query with pagination
+  const allResults = [];
+  let url = `${baseUrl}/SQLQueries('${queryCode}')/List`;
+  let pageCount = 0;
+  const maxPages = 100;
+
+  while (url && pageCount < maxPages) {
+    const execResponse = await fetch(url, {
+      method: 'POST',
+      headers,
+    });
+
+    if (!execResponse.ok) {
+      const error = await execResponse.json();
+      throw new Error(`SQL query failed: ${error.error?.message?.value || 'Unknown error'}`);
+    }
+
+    const data = await execResponse.json();
+    const results = data.value || [];
+    allResults.push(...results);
+
+    const nextLink = data['odata.nextLink'];
+    if (nextLink) {
+      url = nextLink.startsWith('http') ? nextLink : `${baseUrl}/${nextLink}`;
+    } else {
+      url = null;
+    }
+    pageCount++;
+  }
+
+  return allResults;
+}
+
+/**
+ * Get ALL batch stock for an item at a specific location in SAP
+ * Returns all batches with their quantities - more efficient than per-batch queries
+ *
+ * @param {string} itemCode - SAP item code
+ * @param {string} warehouseCode - SAP warehouse code
+ * @param {number|null} binAbsEntry - Bin absolute entry (for bin locations)
+ * @returns {Promise<Object>} { success: boolean, batches: Array<{batchNumber, quantity}>, error?: string }
+ */
+async function getAllBatchStockAtLocation(itemCode, warehouseCode, binAbsEntry = null) {
+  await ensureSession();
+
+  try {
+    const safeItemCode = sanitizeODataValue(itemCode, 'itemCode');
+    const safeWarehouse = sanitizeODataValue(warehouseCode, 'warehouseCode');
+
+    let sqlText;
+    let queryCode;
+
+    // Generate a safe query code (alphanumeric only)
+    const safeQueryCode = (str) => str.replace(/[^a-zA-Z0-9]/g, '').substring(0, 20);
+
+    if (binAbsEntry) {
+      // Location with bin - use OBBQ (one query per item+bin)
+      queryCode = `VBIN_${safeQueryCode(safeItemCode)}_${binAbsEntry}`.substring(0, 50);
+      sqlText = `
+        SELECT T1.DistNumber AS BatchNum, T0.OnHandQty AS Quantity
+        FROM OBBQ T0
+        INNER JOIN OBTN T1 ON T0.SnBMDAbs = T1.AbsEntry
+        WHERE T0.ItemCode = '${safeItemCode}'
+          AND T0.BinAbs = ${binAbsEntry}
+          AND T0.OnHandQty > 0
+      `.trim();
+    } else {
+      // Location without bin - use OIBT (one query per item+warehouse)
+      queryCode = `VWH_${safeQueryCode(safeItemCode)}_${safeQueryCode(safeWarehouse)}`.substring(0, 50);
+      sqlText = `
+        SELECT T0.BatchNum, T0.Quantity
+        FROM OIBT T0
+        WHERE T0.ItemCode = '${safeItemCode}'
+          AND T0.WhsCode = '${safeWarehouse}'
+          AND T0.Quantity > 0
+      `.trim();
+    }
+
+    const results = await executeSQLQuery(queryCode, 'Item Batch Stock', sqlText);
+
+    const batches = (results || []).map(row => ({
+      batchNumber: row.BatchNum,
+      quantity: row.Quantity || row.OnHandQty || 0,
+    }));
+
+    return {
+      success: true,
+      batches,
+    };
+  } catch (error) {
+    console.error('Error getting batch stock from SAP:', error.message);
+    return {
+      success: false,
+      batches: [],
+      error: error.message,
+    };
+  }
+}
+
+/**
+ * Verify batch stock at a specific location in SAP
+ * Uses the more efficient getAllBatchStockAtLocation internally
+ *
+ * @param {string} itemCode - SAP item code
+ * @param {string} batchNumber - Batch/lot number
+ * @param {string} warehouseCode - SAP warehouse code
+ * @param {number|null} binAbsEntry - Bin absolute entry (for bin locations)
+ * @returns {Promise<Object>} { exists: boolean, quantity: number, error?: string }
+ */
+async function verifyBatchStockAtLocation(itemCode, batchNumber, warehouseCode, binAbsEntry = null) {
+  const result = await getAllBatchStockAtLocation(itemCode, warehouseCode, binAbsEntry);
+
+  if (!result.success) {
+    return {
+      exists: null,
+      quantity: 0,
+      error: result.error,
+    };
+  }
+
+  const batch = result.batches.find(b => b.batchNumber === batchNumber);
+
+  return {
+    exists: batch ? batch.quantity > 0 : false,
+    quantity: batch ? batch.quantity : 0,
+  };
+}
+
+/**
+ * Verify multiple batch items for a stock transfer
+ * Pre-operation guard for consignments
+ *
+ * Optimized: Groups items by itemCode and queries once per item (not per batch)
+ * This reduces SAP queries from N (per batch) to M (per unique item)
+ *
+ * @param {Array} items - Array of { itemCode, batchNumber, quantity }
+ * @param {string} sourceWarehouse - SAP warehouse code
+ * @param {number|null} sourceBinAbsEntry - Bin absolute entry (for bin locations)
+ * @returns {Promise<Object>} { valid: boolean, mismatches: Array, errors: Array, verified: Array }
+ */
+async function verifyBatchStockForTransfer(items, sourceWarehouse, sourceBinAbsEntry = null) {
+  const results = {
+    valid: true,
+    mismatches: [],
+    errors: [],
+    verified: [],
+  };
+
+  // Group items by itemCode to minimize SAP queries
+  const itemsByCode = {};
+  for (const item of items) {
+    if (!itemsByCode[item.itemCode]) {
+      itemsByCode[item.itemCode] = [];
+    }
+    itemsByCode[item.itemCode].push(item);
+  }
+
+  // Query SAP once per unique itemCode
+  for (const [itemCode, itemList] of Object.entries(itemsByCode)) {
+    const sapResult = await getAllBatchStockAtLocation(itemCode, sourceWarehouse, sourceBinAbsEntry);
+
+    if (!sapResult.success) {
+      // SAP error for this item = can't verify any of its batches
+      results.valid = false;
+      for (const item of itemList) {
+        results.errors.push({
+          itemCode: item.itemCode,
+          batchNumber: item.batchNumber,
+          error: sapResult.error,
+        });
+      }
+      continue;
+    }
+
+    // Build a map of batch -> quantity for quick lookup
+    const sapBatchMap = {};
+    for (const batch of sapResult.batches) {
+      sapBatchMap[batch.batchNumber] = batch.quantity;
+    }
+
+    // Check each batch in the item list
+    for (const item of itemList) {
+      const sapQuantity = sapBatchMap[item.batchNumber] || 0;
+
+      if (sapQuantity < item.quantity) {
+        results.valid = false;
+        results.mismatches.push({
+          itemCode: item.itemCode,
+          batchNumber: item.batchNumber,
+          requestedQuantity: item.quantity,
+          sapQuantity: sapQuantity,
+          message: sapQuantity === 0
+            ? `Lote ${item.batchNumber} no tiene stock en SAP para este almacén`
+            : `Lote ${item.batchNumber}: SAP muestra ${sapQuantity} unidades, pero intentas transferir ${item.quantity}`,
+        });
+      } else {
+        results.verified.push({
+          itemCode: item.itemCode,
+          batchNumber: item.batchNumber,
+          requestedQuantity: item.quantity,
+          sapQuantity: sapQuantity,
+        });
+      }
+    }
+  }
+
+  return results;
+}
+
+// ============================================
+// DOCUMENT RECONCILIATION FUNCTIONS
+// Query SAP for recent documents to detect external changes
+// ============================================
+
+/**
+ * Format date for OData filter (SAP B1 format)
+ * @param {Date} date
+ * @returns {string} Formatted date string like '2026-01-13'
+ */
+function formatODataDate(date) {
+  return date.toISOString().split('T')[0];
+}
+
+/**
+ * Fetch all pages from a SAP OData endpoint
+ * Follows odata.nextLink for pagination
+ *
+ * @param {string} initialEndpoint - Initial endpoint URL
+ * @returns {Promise<Array>} All records across all pages
+ */
+async function fetchAllPages(initialEndpoint) {
+  const allResults = [];
+  let url = `${SAP_CONFIG.serviceUrl}${initialEndpoint}`;
+  let pageCount = 0;
+  const maxPages = 100;
+
+  while (url && pageCount < maxPages) {
+    const response = await fetch(url, {
+      method: 'GET',
+      headers: {
+        'Content-Type': 'application/json',
+        'Cookie': `B1SESSION=${sessionId}`,
+      },
+    });
+
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({}));
+      throw new Error(error.error?.message?.value || `Failed to fetch: ${response.status}`);
+    }
+
+    const data = await response.json();
+    const results = data.value || [];
+    allResults.push(...results);
+
+    // Follow pagination link if present
+    const nextLink = data['odata.nextLink'];
+    if (nextLink) {
+      url = nextLink.startsWith('http') ? nextLink : `${SAP_CONFIG.serviceUrl}/${nextLink}`;
+    } else {
+      url = null;
+    }
+    pageCount++;
+  }
+
+  return allResults;
+}
+
+/**
+ * Get recent Purchase Delivery Notes from SAP
+ * Used for reconciliation to detect goods receipts created outside our app
+ *
+ * @param {Date} since - Get documents since this date
+ * @param {Array<string>} itemCodes - Filter to documents containing these item codes (optional)
+ * @returns {Promise<Object>} { success: boolean, documents: Array, error?: string }
+ */
+async function getRecentPurchaseDeliveryNotes(since, itemCodes = null) {
+  await ensureSession();
+
+  try {
+    const formattedDate = formatODataDate(since);
+    const endpoint = `/PurchaseDeliveryNotes?$filter=DocDate ge '${formattedDate}'&$select=DocEntry,DocNum,DocDate,CardCode,CardName,Comments,DocumentLines&$orderby=DocDate desc`;
+
+    let documents = await fetchAllPages(endpoint);
+
+    // Filter to documents containing our item codes if specified
+    if (itemCodes && itemCodes.length > 0) {
+      const itemCodeSet = new Set(itemCodes);
+      documents = documents.filter(doc =>
+        doc.DocumentLines?.some(line => itemCodeSet.has(line.ItemCode))
+      );
+    }
+
+    // Map to a simpler structure
+    const mapped = documents.map(doc => ({
+      sapDocEntry: doc.DocEntry,
+      sapDocNum: doc.DocNum,
+      sapDocType: 'PurchaseDeliveryNote',
+      sapDocDate: new Date(doc.DocDate),
+      cardCode: doc.CardCode,
+      cardName: doc.CardName,
+      comments: doc.Comments,
+      items: (doc.DocumentLines || []).map(line => ({
+        sapItemCode: line.ItemCode,
+        quantity: line.Quantity,
+        batchNumber: line.BatchNumbers?.[0]?.BatchNumber || null,
+        warehouseCode: line.WarehouseCode,
+        binAbsEntry: line.DocumentLinesBinAllocations?.[0]?.BinAbsEntry || null,
+      })),
+    }));
+
+    return { success: true, documents: mapped };
+  } catch (error) {
+    console.error('Error fetching PurchaseDeliveryNotes:', error.message);
+    return { success: false, documents: [], error: error.message };
+  }
+}
+
+/**
+ * Get recent Stock Transfers from SAP
+ * Used for reconciliation to detect transfers created outside our app
+ *
+ * @param {Date} since - Get documents since this date
+ * @param {Array<string>} itemCodes - Filter to documents containing these item codes (optional)
+ * @returns {Promise<Object>} { success: boolean, documents: Array, error?: string }
+ */
+async function getRecentStockTransfers(since, itemCodes = null) {
+  await ensureSession();
+
+  try {
+    const formattedDate = formatODataDate(since);
+    const endpoint = `/StockTransfers?$filter=DocDate ge '${formattedDate}'&$select=DocEntry,DocNum,DocDate,Comments,StockTransferLines&$orderby=DocDate desc`;
+
+    let documents = await fetchAllPages(endpoint);
+
+    // Filter to documents containing our item codes if specified
+    if (itemCodes && itemCodes.length > 0) {
+      const itemCodeSet = new Set(itemCodes);
+      documents = documents.filter(doc =>
+        doc.StockTransferLines?.some(line => itemCodeSet.has(line.ItemCode))
+      );
+    }
+
+    // Map to a simpler structure
+    const mapped = documents.map(doc => ({
+      sapDocEntry: doc.DocEntry,
+      sapDocNum: doc.DocNum,
+      sapDocType: 'StockTransfer',
+      sapDocDate: new Date(doc.DocDate),
+      comments: doc.Comments,
+      items: (doc.StockTransferLines || []).map(line => ({
+        sapItemCode: line.ItemCode,
+        quantity: line.Quantity,
+        batchNumber: line.BatchNumbers?.[0]?.BatchNumber || null,
+        fromWarehouseCode: line.FromWarehouseCode,
+        toWarehouseCode: line.WarehouseCode,
+        fromBinAbsEntry: line.StockTransferLinesBinAllocations?.find(a => a.BinActionType === 'batFromWarehouse')?.BinAbsEntry || null,
+        toBinAbsEntry: line.StockTransferLinesBinAllocations?.find(a => a.BinActionType === 'batToWarehouse')?.BinAbsEntry || null,
+      })),
+    }));
+
+    return { success: true, documents: mapped };
+  } catch (error) {
+    console.error('Error fetching StockTransfers:', error.message);
+    return { success: false, documents: [], error: error.message };
+  }
+}
+
+/**
+ * Get recent Delivery Notes from SAP
+ * Used for reconciliation to detect consumptions/deliveries created outside our app
+ *
+ * @param {Date} since - Get documents since this date
+ * @param {Array<string>} itemCodes - Filter to documents containing these item codes (optional)
+ * @returns {Promise<Object>} { success: boolean, documents: Array, error?: string }
+ */
+async function getRecentDeliveryNotes(since, itemCodes = null) {
+  await ensureSession();
+
+  try {
+    const formattedDate = formatODataDate(since);
+    const endpoint = `/DeliveryNotes?$filter=DocDate ge '${formattedDate}'&$select=DocEntry,DocNum,DocDate,CardCode,CardName,Comments,DocumentLines&$orderby=DocDate desc`;
+
+    let documents = await fetchAllPages(endpoint);
+
+    // Filter to documents containing our item codes if specified
+    if (itemCodes && itemCodes.length > 0) {
+      const itemCodeSet = new Set(itemCodes);
+      documents = documents.filter(doc =>
+        doc.DocumentLines?.some(line => itemCodeSet.has(line.ItemCode))
+      );
+    }
+
+    // Map to a simpler structure
+    const mapped = documents.map(doc => ({
+      sapDocEntry: doc.DocEntry,
+      sapDocNum: doc.DocNum,
+      sapDocType: 'DeliveryNote',
+      sapDocDate: new Date(doc.DocDate),
+      cardCode: doc.CardCode,
+      cardName: doc.CardName,
+      comments: doc.Comments,
+      items: (doc.DocumentLines || []).map(line => ({
+        sapItemCode: line.ItemCode,
+        quantity: line.Quantity,
+        batchNumber: line.BatchNumbers?.[0]?.BatchNumber || null,
+        warehouseCode: line.WarehouseCode,
+        binAbsEntry: line.DocumentLinesBinAllocations?.[0]?.BinAbsEntry || null,
+      })),
+    }));
+
+    return { success: true, documents: mapped };
+  } catch (error) {
+    console.error('Error fetching DeliveryNotes:', error.message);
+    return { success: false, documents: [], error: error.message };
+  }
+}
+
 module.exports = {
   login,
   logout,
@@ -595,4 +1057,13 @@ module.exports = {
   getServiceUrl,
   validateBatchItem,
   validateBatchItems,
+  // Pre-operation guards
+  getAllBatchStockAtLocation,
+  verifyBatchStockAtLocation,
+  verifyBatchStockForTransfer,
+  executeSQLQuery,
+  // Document reconciliation
+  getRecentPurchaseDeliveryNotes,
+  getRecentStockTransfers,
+  getRecentDeliveryNotes,
 };

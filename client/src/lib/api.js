@@ -114,6 +114,10 @@ export const consignacionesApi = {
   create: (data) => api.post('/consignaciones', data),
   confirm: (id, data) => api.put(`/consignaciones/${id}/confirm`, data),
   retrySap: (id) => api.post(`/consignaciones/${id}/retry-sap`),
+  // Preview FIFO allocation (for items without explicit lot selection)
+  previewFifo: (data) => api.post('/consignaciones/preview-fifo', data),
+  // Pre-operation guard: validate SAP stock before creating
+  validateSapStock: (data) => api.post('/consignaciones/validate-sap-stock', data),
 };
 
 // SAP Integration API (for stock transfers, batch queries, etc.)
@@ -164,6 +168,8 @@ export const consumptionApi = {
   getOne: (id) => api.get(`/consumption/${id}`),
   // Retry failed SAP sync
   retrySap: (id) => api.post(`/consumption/${id}/retry-sap`),
+  // Pre-operation guard: validate SAP stock before creating
+  validateSapStock: (data) => api.post('/consumption/validate-sap-stock', data),
   // Extract from uploaded documents
   extract: (files, centroId) => {
     const formData = new FormData();
@@ -177,6 +183,24 @@ export const consumptionApi = {
       headers: { 'Content-Type': 'multipart/form-data' }
     });
   },
+};
+
+// Reconciliation API (SAP document reconciliation)
+export const reconciliationApi = {
+  // Trigger on-demand reconciliation (with optional date range)
+  run: (options = {}) => api.post('/reconciliation/run', options),
+  // Get status (latest run + pending count)
+  getStatus: () => api.get('/reconciliation/status'),
+  // Get run history
+  getRunHistory: (limit = 10) => api.get('/reconciliation/runs', { params: { limit } }),
+  // Get external documents
+  getExternalDocuments: (params) => api.get('/reconciliation/external-documents', { params }),
+  // Update document status
+  updateDocumentStatus: (id, status, notes) => api.put(`/reconciliation/external-documents/${id}/status`, { status, notes }),
+  // Get reconciliation config (goLiveDate, etc.)
+  getConfig: () => api.get('/reconciliation/config'),
+  // Set goLiveDate manually
+  setGoLiveDate: (date) => api.put('/reconciliation/config/go-live-date', { date }),
 };
 
 export default api;

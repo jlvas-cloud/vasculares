@@ -9,7 +9,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../co
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select';
 import { Badge } from '../components/ui/badge';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '../components/ui/dialog';
-import { Activity, Plus, Trash2, Loader2, CheckCircle2, AlertCircle, Edit3, FileUp, Package } from 'lucide-react';
+import { Activity, Plus, Trash2, Loader2, CheckCircle2, AlertCircle, Edit3, FileUp, Package, XCircle, AlertTriangle } from 'lucide-react';
 import { useToast } from '../components/ui/toast';
 import { formatDate } from '../lib/utils';
 import FileUploader from '../components/FileUploader';
@@ -42,6 +42,11 @@ export default function Consumption() {
   // Result dialog
   const [resultDialogOpen, setResultDialogOpen] = useState(false);
   const [consumptionResult, setConsumptionResult] = useState(null);
+
+  // SAP stock mismatch dialog state
+  const [stockMismatchOpen, setStockMismatchOpen] = useState(false);
+  const [stockMismatches, setStockMismatches] = useState([]);
+  const [validatingSap, setValidatingSap] = useState(false);
 
   const queryClient = useQueryClient();
   const navigate = useNavigate();
@@ -216,7 +221,7 @@ export default function Consumption() {
     extractMutation.mutate(uploadedFiles);
   };
 
-  const handleSubmit = (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault();
 
     if (!selectedCentro) {
@@ -241,13 +246,57 @@ export default function Consumption() {
       return;
     }
 
+    const itemsData = validItems.map((item) => ({
+      loteId: item.loteId,
+      productId: item.productId,
+      quantity: parseInt(item.quantity),
+    }));
+
+    // Pre-operation guard: Validate SAP stock before creating
+    setValidatingSap(true);
+    try {
+      const validationResponse = await consumptionApi.validateSapStock({
+        centroId: selectedCentro,
+        items: itemsData,
+      });
+
+      const validation = validationResponse.data;
+
+      if (!validation.valid) {
+        if (validation.mismatches?.length > 0) {
+          // Show mismatch dialog
+          setStockMismatches(validation.mismatches);
+          setStockMismatchOpen(true);
+        } else if (validation.errors?.length > 0) {
+          // SAP errors during verification
+          const errorMessages = validation.errors.map(e => `${e.batchNumber}: ${e.error}`).join(', ');
+          toast.error(`Error verificando SAP: ${errorMessages}`);
+        } else {
+          toast.error('Error de verificación SAP desconocido');
+        }
+        setValidatingSap(false);
+        return; // Block creation
+      }
+
+      if (validation.sapUnavailable) {
+        // SAP is unreachable - block operation (strict mode)
+        toast.error('No se puede verificar stock en SAP. Intente más tarde.');
+        setValidatingSap(false);
+        return;
+      }
+    } catch (error) {
+      console.error('SAP validation error:', error);
+      // On error, block the operation (strict mode)
+      toast.error('Error al verificar stock en SAP: ' + (error.response?.data?.error || error.message));
+      setValidatingSap(false);
+      return;
+    }
+    setValidatingSap(false);
+
+    // Validation passed - proceed with consumption
     const data = {
       centroId: selectedCentro,
-      items: validItems.map((item) => ({
-        loteId: item.loteId,
-        productId: item.productId,
-        quantity: parseInt(item.quantity),
-      })),
+      items: itemsData,
       patientName: patientName || undefined,
       doctorName: doctorName || undefined,
       procedureDate: procedureDate || undefined,
@@ -779,15 +828,16 @@ export default function Consumption() {
                   type="submit"
                   disabled={
                     createMutation.isPending ||
+                    validatingSap ||
                     !selectedCentro ||
                     currentItems.length === 0 ||
                     !selectedCentroData?.sapIntegration?.cardCode
                   }
                 >
-                  {createMutation.isPending ? (
+                  {(createMutation.isPending || validatingSap) ? (
                     <>
                       <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                      Procesando...
+                      {validatingSap ? 'Verificando SAP...' : 'Procesando...'}
                     </>
                   ) : (
                     <>
@@ -888,6 +938,71 @@ export default function Consumption() {
             <Button onClick={handleCloseResult}>
               <Package className="mr-2 h-4 w-4" />
               Ver Historial
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* SAP Stock Mismatch Warning Dialog */}
+      <Dialog open={stockMismatchOpen} onOpenChange={setStockMismatchOpen}>
+        <DialogContent className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-red-600">
+              <AlertTriangle className="h-5 w-5" />
+              Stock Insuficiente en SAP
+            </DialogTitle>
+            <DialogDescription>
+              La verificación con SAP encontró diferencias de stock. El consumo no puede continuar hasta corregir estas diferencias.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="bg-red-50 border border-red-200 rounded-md p-4">
+              <p className="text-sm text-red-800 mb-3">
+                Esto puede indicar que alguien movió este stock directamente en SAP, o hay un error de sincronización.
+              </p>
+              <div className="space-y-3">
+                {stockMismatches.map((mismatch, index) => (
+                  <div key={index} className="bg-white border border-red-200 rounded p-3">
+                    <div className="flex items-start justify-between">
+                      <div>
+                        <div className="font-medium text-gray-900">
+                          {mismatch.productName}
+                        </div>
+                        <div className="text-sm text-gray-600">
+                          Código: {mismatch.productCode} • Lote: {mismatch.batchNumber}
+                        </div>
+                      </div>
+                      <XCircle className="h-5 w-5 text-red-500 flex-shrink-0" />
+                    </div>
+                    <div className="mt-2 grid grid-cols-2 gap-4 text-sm">
+                      <div>
+                        <span className="text-gray-500">Cantidad solicitada:</span>
+                        <span className="ml-2 font-medium">{mismatch.requestedQuantity}</span>
+                      </div>
+                      <div>
+                        <span className="text-gray-500">Disponible en SAP:</span>
+                        <span className="ml-2 font-medium text-red-600">{mismatch.sapQuantity}</span>
+                      </div>
+                    </div>
+                    <div className="mt-2 text-sm text-red-700 bg-red-100 rounded px-2 py-1">
+                      {mismatch.message}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+            <div className="bg-blue-50 border border-blue-200 rounded-md p-3 text-sm">
+              <p className="font-medium text-blue-900 mb-1">¿Qué hacer?</p>
+              <ul className="text-blue-700 list-disc list-inside space-y-1">
+                <li>Verifique en SAP el stock real de estos lotes</li>
+                <li>Ajuste las cantidades o seleccione otros lotes</li>
+                <li>Si cree que hay un error de sincronización, contacte soporte</li>
+              </ul>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button onClick={() => setStockMismatchOpen(false)}>
+              Entendido, Ajustar Cantidades
             </Button>
           </DialogFooter>
         </DialogContent>

@@ -15,6 +15,7 @@ import Consignaciones from './pages/Consignaciones';
 import GoodsReceipt from './pages/GoodsReceipt';
 import GoodsReceiptHistory from './pages/GoodsReceiptHistory';
 import ConsumptionHistory from './pages/ConsumptionHistory';
+import Reconciliation from './pages/Reconciliation';
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -60,6 +61,7 @@ function App() {
                         <Route path="/consignaciones" element={<Consignaciones />} />
                         <Route path="/goods-receipt" element={<GoodsReceipt />} />
                         <Route path="/goods-receipt-history" element={<GoodsReceiptHistory />} />
+                        <Route path="/reconciliation" element={<Reconciliation />} />
                       </Routes>
                     </Layout>
                   </PrivateRoute>

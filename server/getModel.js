@@ -12,6 +12,9 @@ const inventarioObjetivosSchema = require('./models/inventarioObjetivosModel');
 const consignacionSchema = require('./models/consignacionModel');
 const goodsReceiptSchema = require('./models/goodsReceiptModel');
 const consumoSchema = require('./models/consumoModel');
+const externalSapDocumentSchema = require('./models/externalSapDocumentModel');
+const reconciliationRunSchema = require('./models/reconciliationRunModel');
+const vascularesConfigSchema = require('./models/vascularesConfigModel');
 const usersSchema = require('./models/usersModel');
 const companySchema = require('./models/companyModel');
 
@@ -148,6 +151,36 @@ exports.getGoodsReceiptsModel = async (companyId) => {
 exports.getConsumosModel = async (companyId) => {
   const db = await getVascularesDb(companyId, 'consumos', consumoSchema);
   return db.model('consumos');
+};
+
+/**
+ * Get ExternalSapDocuments model for a specific company
+ * Stored in: {companyId}_vasculares database
+ * Tracks SAP documents that were not created by our app (for reconciliation)
+ */
+exports.getExternalSapDocumentsModel = async (companyId) => {
+  const db = await getVascularesDb(companyId, 'externalsapdocuments', externalSapDocumentSchema);
+  return db.model('externalsapdocuments');
+};
+
+/**
+ * Get ReconciliationRuns model for a specific company
+ * Stored in: {companyId}_vasculares database
+ * Tracks reconciliation job runs and their results
+ */
+exports.getReconciliationRunsModel = async (companyId) => {
+  const db = await getVascularesDb(companyId, 'reconciliationruns', reconciliationRunSchema);
+  return db.model('reconciliationruns');
+};
+
+/**
+ * Get VascularesConfig model for a specific company
+ * Stored in: {companyId}_vasculares database
+ * Stores per-company configuration (reconciliation goLiveDate, etc.)
+ */
+exports.getVascularesConfigModel = async (companyId) => {
+  const db = await getVascularesDb(companyId, 'vascularesconfig', vascularesConfigSchema);
+  return db.model('vascularesconfig');
 };
 
 // ============================================

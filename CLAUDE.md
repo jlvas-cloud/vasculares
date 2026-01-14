@@ -15,11 +15,17 @@ Medical device inventory management system for vascular products (coronary stent
 vasculares/
 ├── server/                     # Backend
 │   ├── models/                 # Mongoose schemas
+│   │   ├── externalSapDocumentModel.js  # External SAP docs (reconciliation)
+│   │   └── reconciliationRunModel.js    # Reconciliation run history
 │   ├── controllers/            # Business logic
+│   │   └── reconciliation.js   # Reconciliation API
 │   ├── services/               # SAP integration
 │   │   ├── sapService.js       # Core SAP API calls
 │   │   ├── sapSyncService.js   # Inventory sync from SAP
+│   │   ├── reconciliationService.js # Document reconciliation logic
 │   │   └── extractionService.js # Claude Vision for packing lists
+│   ├── jobs/                   # Scheduled jobs
+│   │   └── nightlyReconciliation.js # Nightly SAP document check
 │   ├── scripts/                # CLI utilities
 │   │   ├── import-orsiro-codes.js    # Import products
 │   │   ├── import-centros.js         # Import locations
@@ -32,8 +38,9 @@ vasculares/
 └── client/                     # Frontend (React)
     └── src/
         ├── pages/              # Main views
+        │   └── Reconciliation.jsx # Admin reconciliation dashboard
         ├── components/         # UI components
-        └── lib/api.js          # API client
+        └── lib/api.js          # API client (includes reconciliationApi)
 ```
 
 ## Key Data Models
@@ -47,6 +54,8 @@ vasculares/
 | `consignaciones` | Warehouse→Centro transfers | Creates SAP StockTransfers |
 | `consumos` | Consumption at centros | Creates SAP DeliveryNotes |
 | `goodsReceipts` | Incoming stock | Creates SAP PurchaseDeliveryNotes |
+| `externalsapdocuments` | External SAP docs detected | sapDocEntry, sapDocType, status |
+| `reconciliationruns` | Reconciliation job history | runType, status, stats |
 
 ## SAP Integration
 
@@ -67,6 +76,11 @@ vasculares/
 - `createDeliveryNote()` - Consumption with UDFs
 - `getItemBatches()` - Query batch details
 - `getItemInventory()` - Query stock levels
+- `verifyBatchStockForTransfer()` - Pre-op guard for consignments
+- `getAllBatchStockAtLocation()` - Query batch stock via SQLQueries
+- `getRecentPurchaseDeliveryNotes()` - Reconciliation: query goods receipts
+- `getRecentStockTransfers()` - Reconciliation: query transfers
+- `getRecentDeliveryNotes()` - Reconciliation: query deliveries
 
 ## Onboarding Flow
 
@@ -119,6 +133,19 @@ node scripts/sync-inventory-from-sap.js
    - Claude Vision API extracts data from packing list images
    - Tab UI in GoodsReceipt page
 
+6. **SAP Batch Validation** (2026-01-13)
+   - Validates batch-product relationship before goods receipt
+   - Blocks creation if batch belongs to different product in SAP
+   - Shows correct product code/name for user to fix
+
+7. **SAP Reconciliation System** (2026-01-13)
+   - **Pre-Operation Guards:** Validates SAP stock before consignments/consumptions
+   - **Document Reconciliation:** Detects external SAP documents (nightly + on-demand)
+   - **Moving Date Window:** Uses goLiveDate (set by sync) + last run's completedAt
+   - Admin dashboard at `/reconciliation` with custom date range selector
+   - Nightly job runs at 2 AM (configurable)
+   - See `server/docs/sap-reconciliation-design.md`
+
 ## Environment Variables
 
 ```env
@@ -129,6 +156,11 @@ SAP_B1_USERNAME=manager
 SAP_B1_PASSWORD=...
 COMPANY_ID=613a3e44b934a2e264187048
 DEBUG_SAP=false
+
+# Reconciliation (optional)
+RECONCILIATION_CRON=0 2 * * *        # Default: 2 AM daily
+ENABLE_CRON_JOBS=true                # Set to false to disable nightly job
+# Note: goLiveDate is set automatically by sync-inventory-from-sap.js
 ```
 
 ## Documentation
@@ -136,7 +168,8 @@ DEBUG_SAP=false
 - `server/ONBOARDING.md` - Complete setup guide
 - `server/TODO.md` - Known issues and recent work
 - `server/ISSUES.md` - SAP bug tracking (18 issues resolved)
-- `server/docs/sap-sqlqueries-setup.md` - **SAP SQLQueries configuration for inventory sync**
+- `server/docs/sap-sqlqueries-setup.md` - SAP SQLQueries configuration for inventory sync
+- `server/docs/sap-reconciliation-design.md` - **SAP reconciliation system design (IMPLEMENTED)**
 - `server/docs/exportar-inventario-sap.md` - Manual CSV export from SAP (fallback)
 - `~/.claude/plans/gentle-frolicking-aurora.md` - Active planning document
 

@@ -9,7 +9,7 @@ import { Input } from '../components/ui/input';
 import { Button } from '../components/ui/button';
 import { Badge } from '../components/ui/badge';
 import { useToast } from '../components/ui/toast';
-import { BarChart3, TrendingUp, AlertTriangle, CheckCircle2, Edit, Warehouse, Truck, Loader2, Check, Package, ChevronDown, ChevronRight } from 'lucide-react';
+import { BarChart3, TrendingUp, AlertTriangle, CheckCircle2, Edit, Warehouse, Truck, Loader2, Check, Package, ChevronDown, ChevronRight, XCircle } from 'lucide-react';
 
 export default function Planning() {
   const [category, setCategory] = useState('all');
@@ -21,6 +21,10 @@ export default function Planning() {
   const [expandedProducts, setExpandedProducts] = useState({});
   const [warehouseLots, setWarehouseLots] = useState({});
   const [loadingLots, setLoadingLots] = useState(false);
+  // SAP stock mismatch dialog state
+  const [stockMismatchOpen, setStockMismatchOpen] = useState(false);
+  const [stockMismatches, setStockMismatches] = useState([]);
+  const [validatingSap, setValidatingSap] = useState(false);
   const queryClient = useQueryClient();
   const toast = useToast();
 
@@ -137,7 +141,7 @@ export default function Planning() {
     }
   };
 
-  const handleCreateConsignment = () => {
+  const handleCreateConsignment = async () => {
     // Build items from lot selections
     const items = [];
 
@@ -178,6 +182,78 @@ export default function Planning() {
       return;
     }
 
+    // Pre-operation guard: Validate SAP stock before creating
+    // Step 1: For FIFO items (without lot numbers), preview allocation first
+    setValidatingSap(true);
+
+    let itemsToValidate = items.filter(item => item.lotNumber);
+    const fifoItems = items.filter(item => !item.lotNumber);
+
+    try {
+      // If there are FIFO items, get their lot allocation first
+      if (fifoItems.length > 0) {
+        const fifoResponse = await consignacionesApi.previewFifo({
+          fromLocationId: warehouseLocation._id,
+          items: fifoItems,
+        });
+
+        if (!fifoResponse.data.success) {
+          toast.error(fifoResponse.data.error || 'Error al asignar lotes FIFO');
+          setValidatingSap(false);
+          return;
+        }
+
+        // Add the FIFO-allocated items to validation list
+        const fifoAllocated = fifoResponse.data.items.map(item => ({
+          productId: item.productId,
+          lotNumber: item.lotNumber,
+          quantitySent: item.quantitySent,
+        }));
+        itemsToValidate = [...itemsToValidate, ...fifoAllocated];
+      }
+
+      // Step 2: Validate all items against SAP
+      if (itemsToValidate.length > 0) {
+        const validationResponse = await consignacionesApi.validateSapStock({
+          fromLocationId: warehouseLocation._id,
+          items: itemsToValidate,
+        });
+
+        const validation = validationResponse.data;
+
+        if (!validation.valid) {
+          if (validation.mismatches?.length > 0) {
+            // Show mismatch dialog
+            setStockMismatches(validation.mismatches);
+            setStockMismatchOpen(true);
+          } else if (validation.errors?.length > 0) {
+            // SAP errors during verification
+            const errorMessages = validation.errors.map(e => `${e.batchNumber}: ${e.error}`).join(', ');
+            toast.error(`Error verificando SAP: ${errorMessages}`);
+          } else {
+            toast.error('Error de verificación SAP desconocido');
+          }
+          setValidatingSap(false);
+          return; // Block creation
+        }
+
+        if (validation.sapUnavailable) {
+          // SAP is unreachable - block operation (strict mode)
+          toast.error('No se puede verificar stock en SAP. Intente más tarde.');
+          setValidatingSap(false);
+          return;
+        }
+      }
+    } catch (error) {
+      console.error('SAP validation error:', error);
+      // On error, block the operation (strict mode)
+      toast.error('Error al verificar stock en SAP: ' + (error.response?.data?.error || error.message));
+      setValidatingSap(false);
+      return;
+    }
+    setValidatingSap(false);
+
+    // Validation passed - proceed with consignment
     const consignmentData = {
       fromLocationId: warehouseLocation._id,
       toLocationId: location,
@@ -918,6 +994,7 @@ export default function Planning() {
                 createConsignmentMutation.isPending ||
                 createConsignmentMutation.isSuccess ||
                 loadingLots ||
+                validatingSap ||
                 consignmentItems.filter(item => {
                   if (!item.included) return false;
                   const productLots = warehouseLots[item.productId] || [];
@@ -927,17 +1004,84 @@ export default function Planning() {
               }
               className={createConsignmentMutation.isSuccess ? 'bg-green-600 hover:bg-green-700' : ''}
             >
-              {createConsignmentMutation.isPending && (
+              {(createConsignmentMutation.isPending || validatingSap) && (
                 <Loader2 className="mr-2 h-4 w-4 animate-spin" />
               )}
               {createConsignmentMutation.isSuccess && (
                 <Check className="mr-2 h-4 w-4" />
               )}
-              {createConsignmentMutation.isPending
+              {validatingSap
+                ? 'Verificando SAP...'
+                : createConsignmentMutation.isPending
                 ? 'Creando Consignación...'
                 : createConsignmentMutation.isSuccess
                 ? '¡Creada!'
                 : 'Confirmar Consignación'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* SAP Stock Mismatch Warning Dialog */}
+      <Dialog open={stockMismatchOpen} onOpenChange={setStockMismatchOpen}>
+        <DialogContent className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-red-600">
+              <AlertTriangle className="h-5 w-5" />
+              Stock Insuficiente en SAP
+            </DialogTitle>
+            <DialogDescription>
+              La verificación con SAP encontró diferencias de stock. La consignación no puede continuar hasta corregir estas diferencias.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="bg-red-50 border border-red-200 rounded-md p-4">
+              <p className="text-sm text-red-800 mb-3">
+                Esto puede indicar que alguien movió este stock directamente en SAP, o hay un error de sincronización.
+              </p>
+              <div className="space-y-3">
+                {stockMismatches.map((mismatch, index) => (
+                  <div key={index} className="bg-white border border-red-200 rounded p-3">
+                    <div className="flex items-start justify-between">
+                      <div>
+                        <div className="font-medium text-gray-900">
+                          {mismatch.productName}
+                        </div>
+                        <div className="text-sm text-gray-600">
+                          Código: {mismatch.productCode} • Lote: {mismatch.batchNumber}
+                        </div>
+                      </div>
+                      <XCircle className="h-5 w-5 text-red-500 flex-shrink-0" />
+                    </div>
+                    <div className="mt-2 grid grid-cols-2 gap-4 text-sm">
+                      <div>
+                        <span className="text-gray-500">Cantidad solicitada:</span>
+                        <span className="ml-2 font-medium">{mismatch.requestedQuantity}</span>
+                      </div>
+                      <div>
+                        <span className="text-gray-500">Disponible en SAP:</span>
+                        <span className="ml-2 font-medium text-red-600">{mismatch.sapQuantity}</span>
+                      </div>
+                    </div>
+                    <div className="mt-2 text-sm text-red-700 bg-red-100 rounded px-2 py-1">
+                      {mismatch.message}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+            <div className="bg-blue-50 border border-blue-200 rounded-md p-3 text-sm">
+              <p className="font-medium text-blue-900 mb-1">¿Qué hacer?</p>
+              <ul className="text-blue-700 list-disc list-inside space-y-1">
+                <li>Verifique en SAP el stock real de estos lotes</li>
+                <li>Ajuste las cantidades a consignar o seleccione otros lotes</li>
+                <li>Si cree que hay un error de sincronización, contacte soporte</li>
+              </ul>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button onClick={() => setStockMismatchOpen(false)}>
+              Entendido, Ajustar Cantidades
             </Button>
           </DialogFooter>
         </DialogContent>
