@@ -266,14 +266,18 @@ ENABLE_CRON_JOBS=true                  # Set to false to disable
 
 ### 8. External Document Import - COMPLETE
 
-**Status:** Implemented 2026-01-14
+**Status:** Implemented 2026-01-14 (with bin allocation and origin tracking)
 
 Allows importing external SAP documents (detected by reconciliation) into the local database.
 
 **Files Created/Modified:**
 - `server/services/externalImportService.js` - Core validation and import logic
+- `server/services/sapService.js` - Added `getStockTransferByDocEntry()` for fetching bin allocations
 - `server/controllers/reconciliation.js` - Added `validateDocument`, `importDocument` endpoints
 - `server/routes/reconciliation.js` - Added validate/import routes
+- `server/models/consignacionModel.js` - Added `origin`, `importedFromId` fields
+- `server/models/consumoModel.js` - Added `origin`, `importedFromId` fields
+- `server/models/goodsReceiptModel.js` - Added `origin`, `importedFromId` fields
 - `client/src/lib/api.js` - Added `validateDocument()`, `importDocument()` methods
 - `client/src/pages/Reconciliation.jsx` - Added import dialog with validation preview
 
@@ -285,6 +289,9 @@ Allows importing external SAP documents (detected by reconciliation) into the lo
 - **Validation before import**: Checks products exist, locations exist, batches exist (for transfers/consumptions)
 - **Preview of changes**: Shows lotes to create/update before confirming
 - **Dependency detection**: If batch missing, suggests importing the goods receipt first
+- **Bin allocation fetching**: Individual document fetch to get `StockTransferLinesBinAllocations` (list queries return empty)
+- **Origin tracking**: Imported documents marked with `origin: 'SAP_IMPORT'` and linked via `importedFromId`
+- **Location matching priority**: bin → cardCode → warehouse
 - **Support for all document types**:
   - PurchaseDeliveryNote → Creates Lotes + GoodsReceipt
   - StockTransfer → Updates Lotes + Creates Consignacion
@@ -296,6 +303,11 @@ Allows importing external SAP documents (detected by reconciliation) into the lo
 3. Click **"Importar"** on any pending document
 4. Review validation result (green=ready, red=errors, yellow=dependencies)
 5. Click **"Importar"** to confirm
+
+**SAP OData Limitation Discovered:**
+- List query (`StockTransfers?$filter=...`) returns `StockTransferLinesBinAllocations: []` (empty)
+- Individual fetch (`StockTransfers(56977)`) returns full bin allocation data
+- Solution: Fetch individual document during import to get accurate bin locations
 
 **Documentation:** `docs/external-document-import.md`
 

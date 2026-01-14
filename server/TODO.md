@@ -301,8 +301,9 @@ node jobs/nightlyReconciliation.js --run-now --company-id=<id>
 
 Allows importing external SAP documents (created directly in SAP, bypassing our app) into the local database.
 
-**Files Created:**
+**Files Created/Modified:**
 - `services/externalImportService.js` - Core validation and import logic
+- `services/sapService.js` - Added `getStockTransferByDocEntry()` for bin allocation fetch
 - Updated `controllers/reconciliation.js` - Added validate/import endpoints
 - Updated `routes/reconciliation.js` - Added routes
 - Updated `client/src/lib/api.js` - Added API methods
@@ -312,6 +313,8 @@ Allows importing external SAP documents (created directly in SAP, bypassing our 
 - **Validation before import**: Checks products, locations, batch existence
 - **Preview of changes**: Shows lotes to create/update before confirming
 - **Dependency detection**: Suggests importing prerequisite documents first
+- **Bin allocation fetching**: Fetches fresh SAP data during import to get bin allocations (OData list queries don't return them)
+- **Origin tracking**: Imported documents marked with `origin: 'SAP_IMPORT'` and linked via `importedFromId`
 - **Support for all document types**:
   - PurchaseDeliveryNote → Creates Lotes + GoodsReceipt
   - StockTransfer → Updates Lotes + Creates Consignacion
@@ -328,6 +331,45 @@ Allows importing external SAP documents (created directly in SAP, bypassing our 
 4. Click "Importar" to confirm
 
 **Documentation:** `docs/external-document-import.md`
+
+---
+
+### Origin Tracking for Imported Documents (2026-01-14)
+**Status:** COMPLETE
+
+Added fields to distinguish app-created documents from SAP-imported documents.
+
+**Schema Changes:**
+- Added `origin` field (`'APP'` | `'SAP_IMPORT'`) to Consignacion, Consumo, GoodsReceipt
+- Added `importedFromId` reference to ExternalSapDocument for traceability
+
+**Files Modified:**
+- `models/consignacionModel.js`
+- `models/consumoModel.js`
+- `models/goodsReceiptModel.js`
+- `services/externalImportService.js`
+
+**UI Consideration:** Existing documents will have `origin: undefined`. UI should treat `undefined` as equivalent to `'APP'`.
+
+---
+
+### StockTransfer Bin Allocation Fetching (2026-01-14)
+**Status:** COMPLETE
+
+SAP OData list queries don't return nested `StockTransferLinesBinAllocations` data. Fixed by fetching individual documents during import.
+
+**Problem:**
+- List query: `StockTransfers?$filter=...` → Returns `StockTransferLinesBinAllocations: []` (empty)
+- Individual fetch: `StockTransfers(56977)` → Returns full bin allocation data
+
+**Solution:**
+- Added `getStockTransferByDocEntry(docEntry)` in sapService.js
+- Validation and Import now fetch fresh SAP data before processing
+- Location matching priority: bin → cardCode → warehouse
+
+**Files Modified:**
+- `services/sapService.js` - Added `getStockTransferByDocEntry()`
+- `services/externalImportService.js` - Fetch fresh data in validation/import
 
 ---
 

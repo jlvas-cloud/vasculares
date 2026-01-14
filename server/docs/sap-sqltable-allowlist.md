@@ -79,6 +79,19 @@ After editing, restart the SAP Service Layer service.
 - The app has fallback logic for reconciliation - OData works without these tables
 - For production setup, request ALL tables at once to minimize requests
 
+## OData vs SQLQueries for Bin Allocations (2026-01-14)
+
+**Discovery:** SAP OData behaves differently for list queries vs individual document fetches:
+
+| Query Type | Bin Allocations |
+|------------|-----------------|
+| `StockTransfers?$filter=DocDate ge '...'` | `StockTransferLinesBinAllocations: []` (empty) |
+| `StockTransfers(56977)` | Full bin allocation data returned |
+
+**Workaround:** For import operations, we fetch individual documents by DocEntry to get accurate bin locations. This works without SQL access to WTQ1.
+
+**Conclusion:** WTQ1/IBT1 tables are NOT required for the import feature - OData individual fetch works.
+
 ## History
 
 | Date | Tables Added | Database | Requested By |
