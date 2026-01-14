@@ -36,9 +36,10 @@ const DRY_RUN = args.includes('--dry-run');
 const CONFIRMED = args.includes('--confirm');
 
 // Collections to DELETE (transactional data)
+// Note: Mongoose pluralizes collection names, so 'inventario' becomes 'inventarios'
 const COLLECTIONS_TO_DELETE = [
   'lotes',
-  'inventario',
+  'inventarios',
   'consignaciones',
   'consumos',
   'goodsreceipts',
