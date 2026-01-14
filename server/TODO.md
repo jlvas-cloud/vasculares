@@ -1,5 +1,27 @@
 # Known Issues & Future Improvements
 
+## Pending Fixes
+
+### Mongoose Duplicate Index Warnings (2026-01-14)
+**Status:** LOW PRIORITY
+
+When running sync or other scripts, Mongoose logs duplicate index warnings:
+
+```
+[MONGOOSE] Warning: Duplicate schema index on {"code":1} found.
+[MONGOOSE] Warning: Duplicate schema index on {"sapItemCode":1} found.
+[MONGOOSE] Warning: Duplicate schema index on {"legacyCode":1} found.
+[MONGOOSE] Warning: Duplicate schema index on {"companyId":1} found.
+```
+
+**Cause:** Index defined both with `index: true` in field options AND `schema.index()` call.
+
+**Fix:** Review `models/productoModel.js` and remove duplicate index definitions. Keep either the field-level `index: true` or the explicit `schema.index()` call, not both.
+
+**Impact:** No functional impact - just console noise. Indexes work correctly.
+
+---
+
 ## Recently Completed
 
 ### Lote Uniqueness Constraint (2026-01-12)

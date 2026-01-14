@@ -93,11 +93,12 @@ export default function Consignaciones() {
   };
 
   const getStatusBadge = (consignment) => {
-    const { status, isOld, sapTransferStatus } = consignment;
+    const { status, isOld, sapIntegration } = consignment;
+    const sapStatus = sapIntegration?.status;
 
     if (status === 'RECIBIDO') {
       // Show SAP sync status for received consignments
-      if (sapTransferStatus === 'FAILED') {
+      if (sapStatus === 'FAILED') {
         return (
           <Badge className="bg-red-100 text-red-800 border-0">
             <XCircle className="h-3 w-3 mr-1" />
@@ -105,7 +106,7 @@ export default function Consignaciones() {
           </Badge>
         );
       }
-      if (sapTransferStatus === 'CREATED') {
+      if (sapStatus === 'SYNCED') {
         return (
           <Badge className="bg-green-100 text-green-800 border-0">
             <CheckCircle2 className="h-3 w-3 mr-1" />
@@ -328,14 +329,14 @@ export default function Consignaciones() {
               )}
 
               {/* SAP Sync Status */}
-              {selectedConsignment.status === 'RECIBIDO' && selectedConsignment.sapTransferStatus === 'FAILED' && (
+              {selectedConsignment.status === 'RECIBIDO' && selectedConsignment.sapIntegration?.status === 'FAILED' && (
                 <div className="bg-red-50 border border-red-200 p-3 rounded-md text-sm">
                   <div className="flex items-center gap-2 mb-2">
                     <XCircle className="h-4 w-4 text-red-600" />
                     <p className="font-medium text-red-900">Error de sincronización SAP</p>
                   </div>
                   <p className="text-red-700 mb-3 font-mono text-xs bg-red-100 p-2 rounded">
-                    {selectedConsignment.sapError || 'Error desconocido'}
+                    {selectedConsignment.sapIntegration?.error || 'Error desconocido'}
                   </p>
                   <Button
                     variant="outline"
@@ -350,13 +351,13 @@ export default function Consignaciones() {
                 </div>
               )}
 
-              {selectedConsignment.status === 'RECIBIDO' && selectedConsignment.sapTransferStatus === 'CREATED' && (
+              {selectedConsignment.status === 'RECIBIDO' && selectedConsignment.sapIntegration?.status === 'SYNCED' && (
                 <div className="bg-green-50 border border-green-200 p-3 rounded-md text-sm">
                   <div className="flex items-center gap-2">
                     <CheckCircle2 className="h-4 w-4 text-green-600" />
                     <p className="font-medium text-green-900">Sincronizado con SAP</p>
-                    {selectedConsignment.sapDocNum && (
-                      <Badge variant="outline" className="ml-2">DocNum: {selectedConsignment.sapDocNum}</Badge>
+                    {selectedConsignment.sapIntegration?.docNum && (
+                      <Badge variant="outline" className="ml-2">DocNum: {selectedConsignment.sapIntegration.docNum}</Badge>
                     )}
                   </div>
                 </div>

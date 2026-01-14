@@ -284,10 +284,22 @@ exports.create = async (req, res, next) => {
       } catch (sapError) {
         // SAP failed - return error, save nothing locally
         console.error('SAP Stock Transfer failed:', sapError.message);
+
+        // Check if it's a network/connection error
+        const isNetworkError = sapError.message?.includes('fetch failed') ||
+          sapError.cause?.code === 'UND_ERR_SOCKET' ||
+          sapError.message?.includes('ECONNRESET') ||
+          sapError.message?.includes('ETIMEDOUT');
+
+        const userMessage = isNetworkError
+          ? 'Error de conexión con SAP. Por favor intente nuevamente.'
+          : `SAP Error: ${sapError.message}`;
+
         return res.status(500).json({
           success: false,
-          error: `SAP Error: ${sapError.message}`,
+          error: userMessage,
           sapError: sapError.message,
+          retry: isNetworkError,
         });
       }
     }

@@ -26,6 +26,8 @@ export default function Consumption() {
   const [selectedProduct, setSelectedProduct] = useState('');
   const [selectedLot, setSelectedLot] = useState('');
   const [quantity, setQuantity] = useState(1);
+  const [productSearch, setProductSearch] = useState('');
+  const [highlightedIndex, setHighlightedIndex] = useState(-1);
 
   // Document extraction state
   const [uploadedFiles, setUploadedFiles] = useState([]);
@@ -78,6 +80,18 @@ export default function Consumption() {
   const availableProducts = useMemo(() => {
     return inventoryData?.items || [];
   }, [inventoryData]);
+
+  // Filter products by search term
+  const filteredProducts = useMemo(() => {
+    if (!productSearch.trim()) return availableProducts;
+    const search = productSearch.toLowerCase();
+    return availableProducts.filter((p) => {
+      const name = String(p.productName || '').toLowerCase();
+      const code = String(p.productCode || '').toLowerCase();
+      const sapCode = String(p.sapItemCode || '').toLowerCase();
+      return name.includes(search) || code.includes(search) || sapCode.includes(search);
+    });
+  }, [availableProducts, productSearch]);
 
   // Get selected product data
   const selectedProductData = useMemo(() => {
@@ -343,6 +357,7 @@ export default function Consumption() {
                     setExtractedItems([]);
                     setSelectedProduct('');
                     setSelectedLot('');
+                    setProductSearch('');
                   }}
                 >
                   <SelectTrigger>
@@ -447,26 +462,103 @@ export default function Consumption() {
                   <div className="grid gap-4 md:grid-cols-4 items-end">
                     <div className="md:col-span-2 grid gap-2">
                       <Label>Producto</Label>
-                      <Select value={selectedProduct} onValueChange={(val) => {
-                        setSelectedProduct(val);
-                        setSelectedLot('');
-                      }}>
-                        <SelectTrigger>
-                          <SelectValue placeholder="Seleccionar producto" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {availableProducts.map((prod) => (
-                            <SelectItem key={prod.productId} value={prod.productId}>
-                              <div>
-                                <span>{prod.productName}</span>
-                                <span className="text-muted-foreground ml-2 text-xs">
-                                  ({prod.lots.reduce((s, l) => s + l.quantityAvailable, 0)} disp.)
-                                </span>
-                              </div>
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
+                      {selectedProduct && selectedProductData ? (
+                        <div className="flex items-center gap-2">
+                          <div className="flex-1 border rounded-md px-3 py-2 bg-muted/50">
+                            <div className="font-medium text-sm">{selectedProductData.productName}</div>
+                            <div className="text-xs text-muted-foreground">
+                              {selectedProductData.lots.reduce((s, l) => s + l.quantityAvailable, 0)} disponibles
+                            </div>
+                          </div>
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            onClick={() => {
+                              setSelectedProduct('');
+                              setSelectedLot('');
+                              setProductSearch('');
+                            }}
+                          >
+                            Cambiar
+                          </Button>
+                        </div>
+                      ) : (
+                        <div className="relative">
+                          <Input
+                            placeholder="Buscar producto..."
+                            value={productSearch}
+                            onChange={(e) => {
+                              setProductSearch(e.target.value);
+                              setHighlightedIndex(-1);
+                            }}
+                            onBlur={() => setTimeout(() => {
+                              setProductSearch('');
+                              setHighlightedIndex(-1);
+                            }, 200)}
+                            onKeyDown={(e) => {
+                              const visibleProducts = filteredProducts.slice(0, 20);
+                              if (e.key === 'ArrowDown') {
+                                e.preventDefault();
+                                setHighlightedIndex((prev) =>
+                                  prev < visibleProducts.length - 1 ? prev + 1 : prev
+                                );
+                              } else if (e.key === 'ArrowUp') {
+                                e.preventDefault();
+                                setHighlightedIndex((prev) => (prev > 0 ? prev - 1 : 0));
+                              } else if (e.key === 'Enter' && highlightedIndex >= 0) {
+                                e.preventDefault();
+                                const prod = visibleProducts[highlightedIndex];
+                                if (prod) {
+                                  setSelectedProduct(prod.productId);
+                                  setSelectedLot('');
+                                  setProductSearch('');
+                                  setHighlightedIndex(-1);
+                                }
+                              } else if (e.key === 'Escape') {
+                                setProductSearch('');
+                                setHighlightedIndex(-1);
+                              }
+                            }}
+                          />
+                          {productSearch.length >= 1 && filteredProducts.length > 0 && (
+                            <div className="absolute z-10 w-full mt-1 bg-background border rounded-md shadow-lg max-h-60 overflow-y-auto">
+                              {filteredProducts.slice(0, 20).map((prod, index) => (
+                                <button
+                                  key={prod.productId}
+                                  type="button"
+                                  className={`w-full px-3 py-2 text-left border-b last:border-b-0 ${
+                                    index === highlightedIndex ? 'bg-muted' : 'hover:bg-muted/50'
+                                  }`}
+                                  onMouseDown={(e) => e.preventDefault()}
+                                  onMouseEnter={() => setHighlightedIndex(index)}
+                                  onClick={() => {
+                                    setSelectedProduct(prod.productId);
+                                    setSelectedLot('');
+                                    setProductSearch('');
+                                    setHighlightedIndex(-1);
+                                  }}
+                                >
+                                  <div className="font-medium text-sm">{prod.productName}</div>
+                                  <div className="text-xs text-muted-foreground">
+                                    {prod.productCode} • {prod.lots?.reduce((s, l) => s + l.quantityAvailable, 0) || 0} disponibles
+                                  </div>
+                                </button>
+                              ))}
+                              {filteredProducts.length > 20 && (
+                                <div className="px-3 py-2 text-xs text-muted-foreground border-t">
+                                  +{filteredProducts.length - 20} más... sigue escribiendo para filtrar
+                                </div>
+                              )}
+                            </div>
+                          )}
+                          {productSearch.length >= 1 && filteredProducts.length === 0 && (
+                            <div className="absolute z-10 w-full mt-1 bg-background border rounded-md shadow-lg p-3 text-sm text-muted-foreground">
+                              No se encontraron productos
+                            </div>
+                          )}
+                        </div>
+                      )}
                     </div>
 
                     <div className="grid gap-2">
