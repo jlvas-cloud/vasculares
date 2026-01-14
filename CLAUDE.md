@@ -149,7 +149,7 @@ node scripts/sync-inventory-from-sap.js
 ## Environment Variables
 
 ```env
-MONGODB_URI=mongodb+srv://...
+MONGODB_URI=mongodb+srv://.../<DATABASE_NAME>  # Database name: 613a3e44b934a2e264187048_vasculares
 SAP_B1_SERVICE_URL=https://94.74.64.47:50000/b1s/v1
 SAP_B1_COMPANY_DB=SBO_VASCULARES
 SAP_B1_USERNAME=manager

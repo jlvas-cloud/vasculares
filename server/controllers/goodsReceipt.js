@@ -402,7 +402,15 @@ async function pushToSapGoodsReceipt({ items, productMap, sapWarehouseCode, supp
 
   // Build document lines with required TaxCode
   const documentLines = items.map(item => {
-    const product = productMap[item.productId];
+    // Handle both string and ObjectId productId
+    const productId = item.productId?.toString ? item.productId.toString() : item.productId;
+    const product = productMap[productId];
+
+    if (!product || !product.sapItemCode) {
+      console.error('Product not found or missing sapItemCode:', { productId, item, availableKeys: Object.keys(productMap) });
+      throw new Error(`Product ${productId} not found in productMap or missing sapItemCode`);
+    }
+
     return {
       ItemCode: product.sapItemCode,
       Quantity: item.quantity,
@@ -426,6 +434,13 @@ async function pushToSapGoodsReceipt({ items, productMap, sapWarehouseCode, supp
     Comments: `Entrada desde Vasculares App${notes ? ` - ${notes}` : ''}`,
     DocumentLines: documentLines
   };
+
+  // Validate all lines have ItemCode before sending
+  const missingItemCodes = documentLines.filter(line => !line.ItemCode);
+  if (missingItemCodes.length > 0) {
+    console.error('Lines with missing ItemCode:', missingItemCodes);
+    throw new Error(`${missingItemCodes.length} line(s) missing ItemCode - check product mapping`);
+  }
 
   const response = await fetch(`${sapService.getServiceUrl()}/PurchaseDeliveryNotes`, {
     method: 'POST',
