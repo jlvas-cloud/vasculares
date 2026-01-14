@@ -134,6 +134,8 @@ export const goodsReceiptApi = {
   getProducts: (search) => api.get('/goods-receipt/products', { params: { search } }),
   getWarehouses: () => api.get('/goods-receipt/warehouses'),
   create: (data) => api.post('/goods-receipt', data),
+  // Batch validation against SAP
+  validateBatches: (items) => api.post('/goods-receipt/validate-batches', { items }),
   // History and management
   getHistory: (params) => api.get('/goods-receipt/history', { params }),
   getOne: (id) => api.get(`/goods-receipt/${id}`),

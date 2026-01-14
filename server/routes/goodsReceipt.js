@@ -23,6 +23,9 @@ router.get('/products', goodsReceiptController.getProductsForReceipt);
 router.get('/warehouses', goodsReceiptController.getWarehouses);
 router.post('/', validateGoodsReceipt, goodsReceiptController.createGoodsReceipt);
 
+// Batch validation against SAP
+router.post('/validate-batches', goodsReceiptController.validateBatches);
+
 // Packing list extraction (Claude Vision)
 router.post('/extract', packingListUpload, handleUploadError, goodsReceiptController.extractFromPackingList);
 

@@ -481,6 +481,107 @@ function getServiceUrl() {
   return SAP_CONFIG.serviceUrl;
 }
 
+/**
+ * Validate batch-item relationship against SAP
+ * Checks if a batch number exists in SAP and returns its linked ItemCode
+ *
+ * @param {string} batchNumber - The batch/lot number to validate
+ * @returns {Object} - { exists: boolean, sapItemCode: string|null, batchDetails: object|null }
+ *
+ * Usage:
+ *   const result = await validateBatchItem('06251742');
+ *   if (result.exists && result.sapItemCode !== expectedItemCode) {
+ *     // Mismatch! Batch belongs to different product in SAP
+ *   }
+ */
+async function validateBatchItem(batchNumber) {
+  await ensureSession();
+
+  try {
+    const sanitizedBatch = sanitizeODataValue(batchNumber, 'batchNumber');
+    const endpoint = `/BatchNumberDetails?$filter=Batch eq '${sanitizedBatch}'&$top=1`;
+
+    const response = await sapRequest('GET', endpoint);
+
+    if (!response.value || response.value.length === 0) {
+      // Batch doesn't exist in SAP - this is OK for new batches
+      return {
+        exists: false,
+        sapItemCode: null,
+        batchDetails: null,
+      };
+    }
+
+    const batchDetails = response.value[0];
+    return {
+      exists: true,
+      sapItemCode: batchDetails.ItemCode,
+      batchDetails: {
+        itemCode: batchDetails.ItemCode,
+        batch: batchDetails.Batch,
+        quantity: batchDetails.Quantity,
+        expiryDate: batchDetails.ExpDate,
+      },
+    };
+  } catch (error) {
+    console.error('Error validating batch in SAP:', error.message);
+    // On error, return unknown state - let caller decide how to handle
+    return {
+      exists: null, // Unknown
+      sapItemCode: null,
+      batchDetails: null,
+      error: error.message,
+    };
+  }
+}
+
+/**
+ * Validate multiple batches against SAP
+ * Efficient batch validation for goods receipt with multiple items
+ *
+ * @param {Array} items - Array of { batchNumber, expectedItemCode } objects
+ * @returns {Object} - { valid: boolean, mismatches: Array, errors: Array }
+ */
+async function validateBatchItems(items) {
+  const results = {
+    valid: true,
+    mismatches: [],
+    errors: [],
+    validated: [],
+  };
+
+  for (const item of items) {
+    const validation = await validateBatchItem(item.batchNumber);
+
+    if (validation.error) {
+      results.errors.push({
+        batchNumber: item.batchNumber,
+        error: validation.error,
+      });
+      continue;
+    }
+
+    if (validation.exists && validation.sapItemCode !== item.expectedItemCode) {
+      results.valid = false;
+      results.mismatches.push({
+        batchNumber: item.batchNumber,
+        expectedItemCode: item.expectedItemCode,
+        sapItemCode: validation.sapItemCode,
+        message: `Batch ${item.batchNumber} belongs to item ${validation.sapItemCode} in SAP, not ${item.expectedItemCode}`,
+      });
+    } else {
+      results.validated.push({
+        batchNumber: item.batchNumber,
+        expectedItemCode: item.expectedItemCode,
+        sapItemCode: validation.sapItemCode,
+        isNewBatch: !validation.exists,
+      });
+    }
+  }
+
+  return results;
+}
+
 module.exports = {
   login,
   logout,
@@ -492,4 +593,6 @@ module.exports = {
   getCustomers,
   createDeliveryNote,
   getServiceUrl,
+  validateBatchItem,
+  validateBatchItems,
 };

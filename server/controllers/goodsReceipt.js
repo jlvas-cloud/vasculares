@@ -726,6 +726,79 @@ exports.retrySapPush = async (req, res, next) => {
 };
 
 /**
+ * POST /api/goods-receipt/validate-batches
+ * Validate batch-item relationships against SAP before creating goods receipt
+ *
+ * Body: {
+ *   items: [{
+ *     lotNumber: String,
+ *     productId: ObjectId,
+ *     productCode: String (sapItemCode)
+ *   }]
+ * }
+ *
+ * Returns: {
+ *   valid: boolean,
+ *   mismatches: [{ lotNumber, expectedItemCode, sapItemCode, correctProductId, correctProductName }],
+ *   validated: [{ lotNumber, isNewBatch }]
+ * }
+ */
+exports.validateBatches = async (req, res, next) => {
+  try {
+    const { items } = req.body;
+
+    if (!items || items.length === 0) {
+      return res.status(400).json({ error: 'Items are required' });
+    }
+
+    // Get products for lookup
+    const Productos = await getProductosModel(req.companyId);
+
+    // Build validation request
+    const validationItems = items.map(item => ({
+      batchNumber: item.lotNumber,
+      expectedItemCode: item.productCode || item.sapItemCode,
+    }));
+
+    // Call SAP validation
+    const validationResult = await sapService.validateBatchItems(validationItems);
+
+    // Enrich mismatches with correct product info from our database
+    const enrichedMismatches = [];
+    for (const mismatch of validationResult.mismatches) {
+      // Find the correct product in our database
+      const correctProduct = await Productos.findOne({
+        sapItemCode: mismatch.sapItemCode,
+        active: true,
+      }).lean();
+
+      enrichedMismatches.push({
+        lotNumber: mismatch.batchNumber,
+        expectedItemCode: mismatch.expectedItemCode,
+        sapItemCode: mismatch.sapItemCode,
+        correctProductId: correctProduct?._id || null,
+        correctProductName: correctProduct?.name || `SAP Item ${mismatch.sapItemCode}`,
+        correctProductCode: correctProduct?.code || null,
+        message: correctProduct
+          ? `Este lote pertenece a "${correctProduct.name}" (código ${mismatch.sapItemCode}) en SAP`
+          : `Este lote pertenece al código ${mismatch.sapItemCode} en SAP (producto no encontrado en sistema local)`,
+      });
+    }
+
+    res.json({
+      valid: validationResult.valid,
+      mismatches: enrichedMismatches,
+      validated: validationResult.validated,
+      errors: validationResult.errors,
+    });
+
+  } catch (error) {
+    console.error('Error validating batches:', error);
+    next(error);
+  }
+};
+
+/**
  * POST /api/goods-receipt/extract
  * Extract product data from packing list images using Claude Vision
  */

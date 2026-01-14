@@ -9,7 +9,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../co
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select';
 import { Badge } from '../components/ui/badge';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '../components/ui/dialog';
-import { Package, Plus, Trash2, Loader2, CheckCircle2, AlertCircle, Search, FileUp, Edit3 } from 'lucide-react';
+import { Package, Plus, Trash2, Loader2, CheckCircle2, AlertCircle, Search, FileUp, Edit3, ShieldAlert } from 'lucide-react';
 import { useToast } from '../components/ui/toast';
 import FileUploader from '../components/FileUploader';
 
@@ -41,6 +41,11 @@ export default function GoodsReceipt() {
   // Result dialog
   const [resultDialogOpen, setResultDialogOpen] = useState(false);
   const [receiptResult, setReceiptResult] = useState(null);
+
+  // Batch validation state
+  const [batchMismatches, setBatchMismatches] = useState([]);
+  const [mismatchDialogOpen, setMismatchDialogOpen] = useState(false);
+  const [validatingBatches, setValidatingBatches] = useState(false);
 
   const queryClient = useQueryClient();
   const navigate = useNavigate();
@@ -171,7 +176,7 @@ export default function GoodsReceipt() {
     extractMutation.mutate(uploadedFiles);
   };
 
-  const handleSubmit = (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault();
 
     // Validate warehouse and supplier
@@ -196,6 +201,31 @@ export default function GoodsReceipt() {
       toast.error('Agrega al menos un producto con todos los campos');
       return;
     }
+
+    // Validate batches against SAP before creating
+    setValidatingBatches(true);
+    try {
+      const validationItems = validItems.map((item) => ({
+        lotNumber: item.lotNumber,
+        productCode: item.sapItemCode,
+      }));
+
+      const response = await goodsReceiptApi.validateBatches(validationItems);
+      const validation = response.data;
+
+      if (!validation.valid && validation.mismatches?.length > 0) {
+        // Show mismatch dialog - don't allow creation
+        setBatchMismatches(validation.mismatches);
+        setMismatchDialogOpen(true);
+        setValidatingBatches(false);
+        return;
+      }
+    } catch (error) {
+      console.error('Batch validation error:', error);
+      // If validation fails, show warning but allow user to proceed
+      toast.warning('No se pudo validar los lotes contra SAP. Verifique los datos.');
+    }
+    setValidatingBatches(false);
 
     // Get supplier info
     const supplierObj = suppliers.find(s => (s.code || 'other') === selectedSupplier);
@@ -661,9 +691,14 @@ export default function GoodsReceipt() {
                 </Button>
                 <Button
                   type="submit"
-                  disabled={createMutation.isPending || !selectedWarehouse || currentItems.length === 0}
+                  disabled={createMutation.isPending || validatingBatches || !selectedWarehouse || currentItems.length === 0}
                 >
-                  {createMutation.isPending ? (
+                  {validatingBatches ? (
+                    <>
+                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                      Validando lotes...
+                    </>
+                  ) : createMutation.isPending ? (
                     <>
                       <Loader2 className="mr-2 h-4 w-4 animate-spin" />
                       Procesando...
@@ -764,6 +799,73 @@ export default function GoodsReceipt() {
           <DialogFooter>
             <Button onClick={handleCloseResult}>
               Ver Inventario
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Batch Mismatch Warning Dialog */}
+      <Dialog open={mismatchDialogOpen} onOpenChange={setMismatchDialogOpen}>
+        <DialogContent className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-red-600">
+              <ShieldAlert className="h-5 w-5" />
+              Error de Validacion SAP
+            </DialogTitle>
+            <DialogDescription>
+              Los siguientes lotes estan asignados a productos diferentes en SAP.
+              Corrija la seleccion de producto antes de continuar.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-4 max-h-96 overflow-y-auto">
+            {batchMismatches.map((mismatch, idx) => (
+              <div key={idx} className="border border-red-200 bg-red-50 rounded-lg p-4">
+                <div className="flex items-start gap-3">
+                  <AlertCircle className="h-5 w-5 text-red-500 mt-0.5 flex-shrink-0" />
+                  <div className="space-y-2 flex-1">
+                    <div className="font-medium text-red-800">
+                      Lote: {mismatch.lotNumber}
+                    </div>
+                    <div className="text-sm space-y-1">
+                      <div className="flex items-center gap-2">
+                        <span className="text-red-600">Seleccionado:</span>
+                        <Badge variant="outline" className="bg-red-100 text-red-700">
+                          {mismatch.expectedItemCode}
+                        </Badge>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <span className="text-green-600">Correcto en SAP:</span>
+                        <Badge variant="outline" className="bg-green-100 text-green-700">
+                          {mismatch.sapItemCode}
+                        </Badge>
+                      </div>
+                    </div>
+                    <div className="text-sm text-gray-700 bg-white/50 rounded p-2 mt-2">
+                      {mismatch.message}
+                    </div>
+                    {mismatch.correctProductId && (
+                      <div className="text-xs text-gray-500 mt-1">
+                        Producto correcto: {mismatch.correctProductName} (codigo {mismatch.correctProductCode})
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+
+          <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-3 text-sm text-yellow-800">
+            <strong>Importante:</strong> Debe corregir el producto seleccionado para cada lote
+            con error antes de poder crear la recepcion. Cierre este dialogo y edite los productos.
+          </div>
+
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setMismatchDialogOpen(false)}
+            >
+              Cerrar y Corregir
             </Button>
           </DialogFooter>
         </DialogContent>
