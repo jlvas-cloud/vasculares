@@ -14,6 +14,7 @@ This document tracks all SAP tables that need to be added to `b1s_sqltable.conf`
 | DLN1 | ✓ Available | TBD | Reconciliation (Consumptions) |
 | OWTR | ✗ Not allowed | TBD | Reconciliation (Stock Transfers) |
 | WTR1 | ✗ Not allowed | TBD | Reconciliation (Stock Transfers) |
+| WTQ1 | ✗ Not allowed | TBD | Bin allocations for Stock Transfers |
 | IBT1 | ✗ Not allowed | TBD | Batch info in documents |
 
 ## How to Request (for Production)
@@ -29,6 +30,7 @@ Por favor agregar las siguientes tablas a b1s_sqltable.conf en la sección Table
   "PDN1",
   "OWTR",
   "WTR1",
+  "WTQ1",
   "ODLN",
   "DLN1",
   "IBT1",
@@ -55,11 +57,12 @@ These tables enable server-side filtering for reconciliation queries. Without th
 | PDN1 | Purchase Delivery Notes (Lines) | ✓ Already available |
 | OWTR | Stock Transfers (Header) | ✗ Needs AllowList |
 | WTR1 | Stock Transfers (Lines) | ✗ Needs AllowList |
+| WTQ1 | Stock Transfer Bin Allocations | ✗ Needs AllowList |
 | ODLN | Delivery Notes (Header) | ✓ Already available |
 | DLN1 | Delivery Notes (Lines) | ✓ Already available |
 | IBT1 | Batch Allocations in Documents | ✗ Needs AllowList |
 
-**Note:** OPDN, PDN1, ODLN, DLN1 appear to be in the default AllowList. Only OWTR, WTR1, IBT1 need to be requested.
+**Note:** OPDN, PDN1, ODLN, DLN1 appear to be in the default AllowList. Only OWTR, WTR1, WTQ1, IBT1 need to be requested.
 
 ## File Location on SAP Server
 

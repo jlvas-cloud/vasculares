@@ -16,6 +16,10 @@ const externalSapDocumentSchema = new mongoose.Schema({
   },
   sapDocDate: { type: Date, required: true },
 
+  // Business partner (for StockTransfer destination matching)
+  sapCardCode: String,
+  sapCardName: String,
+
   // What was affected
   items: [{
     sapItemCode: { type: String, required: true },

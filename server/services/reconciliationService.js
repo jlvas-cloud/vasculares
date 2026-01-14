@@ -377,6 +377,8 @@ async function processStockTransfers(companyId, run, since, ourItemCodes, produc
         sapDocNum: sapDoc.sapDocNum,
         sapDocType: 'StockTransfer',
         sapDocDate: sapDoc.sapDocDate,
+        sapCardCode: sapDoc.sapCardCode,
+        sapCardName: sapDoc.sapCardName,
         items: enrichedItems,
         detectedAt: new Date(),
         detectedBy: run.runType === 'NIGHTLY' ? 'NIGHTLY_JOB' : 'ON_DEMAND',

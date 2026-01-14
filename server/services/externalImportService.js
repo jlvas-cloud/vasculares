@@ -64,7 +64,7 @@ async function validateImport(companyId, documentId) {
       break;
 
     case 'StockTransfer':
-      await validateStockTransfer(items, { Producto, Locacion, Lote, ExternalSapDocument, errors, dependencies, preview, companyId });
+      await validateStockTransfer(items, { Producto, Locacion, Lote, ExternalSapDocument, errors, dependencies, preview, companyId, sapCardCode: doc.sapCardCode });
       break;
 
     case 'DeliveryNote':
@@ -162,7 +162,7 @@ async function validatePurchaseDeliveryNote(items, { Producto, Locacion, Lote, e
  * Validate StockTransfer
  * Requires batch to exist in source location
  */
-async function validateStockTransfer(items, { Producto, Locacion, Lote, ExternalSapDocument, errors, dependencies, preview, companyId }) {
+async function validateStockTransfer(items, { Producto, Locacion, Lote, ExternalSapDocument, errors, dependencies, preview, companyId, sapCardCode }) {
   for (const item of items) {
     const itemCode = item.sapItemCode;
     const fromWarehouse = item.fromWarehouseCode;
@@ -192,8 +192,17 @@ async function validateStockTransfer(items, { Producto, Locacion, Lote, External
       continue;
     }
 
-    // 3. Check destination location exists
-    const toLocation = await findLocationByWarehouseOrBin(Locacion, toWarehouse, item.toBinAbsEntry);
+    // 3. Check destination location exists (try bin, then cardCode, then warehouse)
+    let toLocation = null;
+    if (item.toBinAbsEntry) {
+      toLocation = await findLocationByWarehouseOrBin(Locacion, toWarehouse, item.toBinAbsEntry);
+    }
+    if (!toLocation && sapCardCode) {
+      toLocation = await findLocationByCardCode(Locacion, sapCardCode);
+    }
+    if (!toLocation) {
+      toLocation = await findLocationByWarehouseOrBin(Locacion, toWarehouse, null);
+    }
     if (!toLocation) {
       errors.push({
         type: 'MISSING_LOCATION',
@@ -410,7 +419,7 @@ async function validateDeliveryNote(items, { Producto, Locacion, Lote, ExternalS
  * Find location by warehouse code or bin entry
  */
 async function findLocationByWarehouseOrBin(Locacion, warehouseCode, binAbsEntry) {
-  // First try to find by bin (more specific)
+  // First try to find by bin (most specific)
   if (binAbsEntry) {
     const byBin = await Locacion.findOne({
       'sapIntegration.binAbsEntry': binAbsEntry,
@@ -421,6 +430,16 @@ async function findLocationByWarehouseOrBin(Locacion, warehouseCode, binAbsEntry
   // Fall back to warehouse code
   return Locacion.findOne({
     'sapIntegration.warehouseCode': warehouseCode,
+  });
+}
+
+/**
+ * Find location by cardCode (for transfers where bin is not specified)
+ */
+async function findLocationByCardCode(Locacion, cardCode) {
+  if (!cardCode) return null;
+  return Locacion.findOne({
+    'sapIntegration.cardCode': cardCode,
   });
 }
 
@@ -669,7 +688,18 @@ async function importStockTransfer(doc, { Producto, Locacion, Lote, Inventario, 
   for (const item of items) {
     const product = await Producto.findOne({ sapItemCode: item.sapItemCode, active: true });
     const fromLocation = await findLocationByWarehouseOrBin(Locacion, item.fromWarehouseCode, item.fromBinAbsEntry);
-    const toLocation = await findLocationByWarehouseOrBin(Locacion, item.toWarehouseCode, item.toBinAbsEntry);
+
+    // For destination: try bin first, then cardCode (from document), then warehouse
+    let toLocation = null;
+    if (item.toBinAbsEntry) {
+      toLocation = await findLocationByWarehouseOrBin(Locacion, item.toWarehouseCode, item.toBinAbsEntry);
+    }
+    if (!toLocation && doc.sapCardCode) {
+      toLocation = await findLocationByCardCode(Locacion, doc.sapCardCode);
+    }
+    if (!toLocation) {
+      toLocation = await findLocationByWarehouseOrBin(Locacion, item.toWarehouseCode, null);
+    }
 
     if (!firstFromLocation) firstFromLocation = fromLocation;
     if (!firstToLocation) firstToLocation = toLocation;

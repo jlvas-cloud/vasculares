@@ -1037,15 +1037,19 @@ async function getRecentStockTransfers(since, itemCodes = null) {
     const formattedDate = since.toISOString().split('T')[0];
     const escapedCodes = itemCodes.map(code => `'${sanitizeODataValue(code)}'`).join(',');
 
-    // SQL query: OWTR = Stock Transfer header, WTR1 = lines, IBT1 = batch allocations
+    // SQL query: OWTR = Stock Transfer header, WTR1 = lines, IBT1 = batch allocations, WTQ1 = bin allocations
+    // WTQ1 contains bin allocations: BinAbsFrom (source bin), BinAbsTo (destination bin)
     const sqlText = `
       SELECT DISTINCT
-        T0.DocEntry, T0.DocNum, T0.DocDate, T0.Comments,
+        T0.DocEntry, T0.DocNum, T0.DocDate, T0.Comments, T0.CardCode, T0.CardName,
         T1.LineNum, T1.ItemCode, T1.Quantity, T1.FromWhsCod as FromWarehouse, T1.WhsCode as ToWarehouse,
-        T2.BatchNum as BatchNumber, T2.Quantity as BatchQty
+        T2.BatchNum as BatchNumber, T2.Quantity as BatchQty,
+        T3.BnAbsEntry as FromBinAbsEntry, T4.BnAbsEntry as ToBinAbsEntry
       FROM OWTR T0
       INNER JOIN WTR1 T1 ON T0.DocEntry = T1.DocEntry
       LEFT JOIN IBT1 T2 ON T1.DocEntry = T2.BaseEntry AND T1.LineNum = T2.BaseLinNum AND T2.BaseType = 67
+      LEFT JOIN WTQ1 T3 ON T1.DocEntry = T3.DocEntry AND T1.LineNum = T3.LineNum AND T3.BinActTyp = 1
+      LEFT JOIN WTQ1 T4 ON T1.DocEntry = T4.DocEntry AND T1.LineNum = T4.LineNum AND T4.BinActTyp = 2
       WHERE T0.DocDate >= '${formattedDate}'
         AND T1.ItemCode IN (${escapedCodes})
       ORDER BY T0.DocDate DESC, T0.DocEntry, T1.LineNum
@@ -1065,6 +1069,8 @@ async function getRecentStockTransfers(since, itemCodes = null) {
           sapDocNum: row.DocNum,
           sapDocType: 'StockTransfer',
           sapDocDate: new Date(row.DocDate),
+          sapCardCode: row.CardCode,
+          sapCardName: row.CardName,
           comments: row.Comments,
           items: [],
         });
@@ -1080,8 +1086,8 @@ async function getRecentStockTransfers(since, itemCodes = null) {
           batchNumber: row.BatchNumber || null,
           fromWarehouseCode: row.FromWarehouse,
           toWarehouseCode: row.ToWarehouse,
-          fromBinAbsEntry: null, // Would need additional join for bin info
-          toBinAbsEntry: null,
+          fromBinAbsEntry: row.FromBinAbsEntry || null,
+          toBinAbsEntry: row.ToBinAbsEntry || null,
         });
       }
     }
@@ -1101,7 +1107,8 @@ async function getRecentStockTransfers(since, itemCodes = null) {
 async function getRecentStockTransfersOData(since, itemCodes = null) {
   try {
     const formattedDate = formatODataDate(since);
-    const endpoint = `/StockTransfers?$filter=DocDate ge '${formattedDate}'&$select=DocEntry,DocNum,DocDate,Comments,StockTransferLines&$orderby=DocDate desc`;
+    // Include CardCode/CardName and expand bin allocations
+    const endpoint = `/StockTransfers?$filter=DocDate ge '${formattedDate}'&$select=DocEntry,DocNum,DocDate,CardCode,CardName,Comments,StockTransferLines&$orderby=DocDate desc`;
 
     let documents = await fetchAllPages(endpoint);
 
@@ -1119,6 +1126,8 @@ async function getRecentStockTransfersOData(since, itemCodes = null) {
       sapDocNum: doc.DocNum,
       sapDocType: 'StockTransfer',
       sapDocDate: new Date(doc.DocDate),
+      sapCardCode: doc.CardCode,
+      sapCardName: doc.CardName,
       comments: doc.Comments,
       items: (doc.StockTransferLines || []).map(line => ({
         sapItemCode: line.ItemCode,
