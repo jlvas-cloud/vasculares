@@ -488,7 +488,8 @@ exports.getPlanningData = async (req, res, next) => {
     // Get stock levels per product
     const mongoose = require('mongoose');
     let stockLevels;
-    let warehouseStockLevels = {}; // For location view, track warehouse stock separately
+    let warehouseStockLevels = {}; // For location view: warehouse stock per product (for consignment availability)
+    let centroStocksByLocation = {}; // For warehouse view: centro stocks per product per location
 
     if (isLocationView) {
       // Stock at specific location (including in-transit)
@@ -563,7 +564,7 @@ exports.getPlanningData = async (req, res, next) => {
             consignedStock: {
               $sum: {
                 $cond: [
-                  { $in: ['$location.type', ['CENTRO', 'HOSPITAL', 'CLINIC']] },
+                  { $eq: ['$location.type', 'CENTRO'] },
                   '$quantityAvailable',
                   0,
                 ],
@@ -585,7 +586,7 @@ exports.getPlanningData = async (req, res, next) => {
           },
         },
         { $unwind: '$location' },
-        { $match: { 'location.type': { $in: ['CENTRO', 'HOSPITAL', 'CLINIC'] } } },
+        { $match: { 'location.type': 'CENTRO' } },
         {
           $group: {
             _id: {
@@ -598,14 +599,13 @@ exports.getPlanningData = async (req, res, next) => {
       ]);
 
       // Create map for centro stocks: { productId: { locationId: stock } }
-      warehouseStockLevels = {}; // Reuse this variable for centro stocks in warehouse view
       centroStockData.forEach((item) => {
         const prodId = item._id.productId.toString();
         const locId = item._id.locationId.toString();
-        if (!warehouseStockLevels[prodId]) {
-          warehouseStockLevels[prodId] = {};
+        if (!centroStocksByLocation[prodId]) {
+          centroStocksByLocation[prodId] = {};
         }
-        warehouseStockLevels[prodId][locId] = item.centroStock;
+        centroStocksByLocation[prodId][locId] = item.centroStock;
       });
     }
 
@@ -781,7 +781,7 @@ exports.getPlanningData = async (req, res, next) => {
                  t.locationId?.type !== 'WAREHOUSE' // Only centro targets
         );
 
-        const centroStocksMap = warehouseStockLevels[product._id.toString()] || {};
+        const centroStocksMap = centroStocksByLocation[product._id.toString()] || {};
 
         // Calculate system-wide totals
         let totalCentroTargets = 0;

@@ -52,6 +52,5 @@ inventarioObjetivosSchema.index({ productId: 1, locationId: 1 }, { unique: true 
 // Indexes for queries
 inventarioObjetivosSchema.index({ locationId: 1, active: 1 });
 inventarioObjetivosSchema.index({ productId: 1, active: 1 });
-inventarioObjetivosSchema.index({ avgMonthlyConsumption: -1 }); // For finding high-consumption items
 
 module.exports = inventarioObjetivosSchema;
