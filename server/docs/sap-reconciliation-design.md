@@ -1,7 +1,8 @@
 # SAP Reconciliation System Design
 
 **Created:** 2026-01-13
-**Status:** IMPLEMENTED (2026-01-13)
+**Status:** FULLY IMPLEMENTED (2026-01-13)
+**Updated:** 2026-01-13 (Moving Date Window)
 
 ---
 
@@ -113,8 +114,25 @@ Periodically check SAP for documents that involve our products but weren't creat
 
 | Trigger | When |
 |---------|------|
-| **Nightly job** | Once per night (e.g., 2:00 AM) |
-| **On-demand** | Admin clicks "Verificar SAP" button |
+| **Nightly job** | Once per night (2:00 AM, configurable via `RECONCILIATION_CRON`) |
+| **On-demand** | Admin clicks "Verificar Ahora" button in dashboard |
+
+### Moving Date Window
+
+Instead of a fixed lookback period (e.g., "last 24 hours"), reconciliation uses a smart moving window:
+
+| Scenario | Date Range |
+|----------|------------|
+| **First run** | From `goLiveDate` (set automatically during initial sync) to now |
+| **Subsequent runs** | From last successful run's `completedAt` to now |
+| **Custom range** | User-specified `fromDate` and `toDate` via dashboard |
+
+**Why this approach:**
+- Prevents flagging old SAP documents as "external" after initial setup
+- Ensures no gaps in coverage (each run starts where the last one ended)
+- Allows admins to re-check specific date ranges if needed
+
+**goLiveDate is set automatically** by `sync-inventory-from-sap.js` on first successful sync. Can also be set manually via admin dashboard.
 
 ### Documents to Check
 
@@ -220,15 +238,49 @@ const reconciliationRunSchema = new mongoose.Schema({
   completedAt: Date,
   status: { type: String, enum: ['RUNNING', 'COMPLETED', 'FAILED'], default: 'RUNNING' },
 
+  // Configuration used for this run (Moving Date Window)
+  config: {
+    fromDate: Date,                    // Start of date range checked
+    toDate: Date,                      // End of date range checked
+    dateSource: {                      // How fromDate was determined
+      type: String,
+      enum: ['LAST_RUN', 'GO_LIVE_DATE', 'CUSTOM_RANGE', 'NONE']
+    },
+    documentTypes: [String]            // Which document types were checked
+  },
+
   // Results
-  documentsChecked: { type: Number, default: 0 },
-  externalDocsFound: { type: Number, default: 0 },
-  errors: [String],
+  stats: {
+    purchaseDeliveryNotesChecked: Number,
+    stockTransfersChecked: Number,
+    deliveryNotesChecked: Number,
+    totalDocumentsChecked: Number,
+    externalDocsFound: Number
+  },
+  errors: [{ timestamp: Date, phase: String, message: String, details: Mixed }],
 
   // Who triggered (for on-demand)
-  triggeredBy: { type: mongoose.Schema.Types.ObjectId, ref: 'Usuario' },
+  triggeredBy: { _id: ObjectId, firstname: String, lastname: String, email: String },
 
   companyId: { type: mongoose.Schema.Types.ObjectId, ref: 'Company', required: true }
+}, { timestamps: true });
+```
+
+### Data Model: VascularesConfig
+
+Per-company configuration for reconciliation (goLiveDate):
+
+```javascript
+const vascularesConfigSchema = new mongoose.Schema({
+  reconciliation: {
+    goLiveDate: { type: Date, default: null },
+    goLiveDateSetBy: {
+      type: { type: String, enum: ['SYNC_SCRIPT', 'MANUAL'] },
+      user: { _id: ObjectId, firstname: String, lastname: String },
+      setAt: Date
+    }
+  },
+  companyId: { type: mongoose.Schema.Types.ObjectId, ref: 'Company', required: true, unique: true }
 }, { timestamps: true });
 ```
 
@@ -302,17 +354,34 @@ Admin section showing:
 
 ---
 
-## 4. Implementation Priority
+## 4. Implementation Status
 
-| Phase | Feature | Files to Create/Modify |
-|-------|---------|------------------------|
-| **1** | Pre-op guard for Consignment | `sapService.js`, `consignaciones controller`, `Consignaciones.jsx` |
-| **2** | Pre-op guard for Consumption | `sapService.js`, `consumption controller`, `Consumption.jsx` |
-| **3** | Document reconciliation service | `services/reconciliationService.js` |
-| **4** | ExternalSapDocument model | `models/externalSapDocumentModel.js` |
-| **5** | Nightly job (cron) | `jobs/nightlyReconciliation.js` |
-| **6** | On-demand API endpoint | `routes/reconciliation.js` |
-| **7** | Admin dashboard UI | `pages/Reconciliation.jsx` |
+**All phases completed 2026-01-13.**
+
+| Phase | Feature | Status | Files |
+|-------|---------|--------|-------|
+| **1** | Pre-op guard for Consignment | ✅ COMPLETE | `sapService.js`, `controllers/consignaciones.js`, `Planning.jsx` |
+| **2** | Pre-op guard for Consumption | ✅ COMPLETE | `sapService.js`, `controllers/consumption.js`, `Consumption.jsx` |
+| **3** | Document reconciliation service | ✅ COMPLETE | `services/reconciliationService.js` |
+| **4** | ExternalSapDocument model | ✅ COMPLETE | `models/externalSapDocumentModel.js` |
+| **5** | ReconciliationRun model | ✅ COMPLETE | `models/reconciliationRunModel.js` |
+| **6** | VascularesConfig model | ✅ COMPLETE | `models/vascularesConfigModel.js` |
+| **7** | Nightly job (cron) | ✅ COMPLETE | `jobs/nightlyReconciliation.js` |
+| **8** | API endpoints | ✅ COMPLETE | `controllers/reconciliation.js`, `routes/reconciliation.js` |
+| **9** | Admin dashboard UI | ✅ COMPLETE | `pages/Reconciliation.jsx` |
+| **10** | Moving date window | ✅ COMPLETE | `reconciliationService.js`, `sync-inventory-from-sap.js` |
+
+### API Endpoints
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| POST | `/api/reconciliation/run` | Trigger on-demand reconciliation (accepts `fromDate`, `toDate`) |
+| GET | `/api/reconciliation/status` | Get latest run + pending document count |
+| GET | `/api/reconciliation/runs` | Get run history |
+| GET | `/api/reconciliation/external-documents` | Get external documents (filterable by `status`) |
+| PUT | `/api/reconciliation/external-documents/:id/status` | Update document status (acknowledge, ignore) |
+| GET | `/api/reconciliation/config` | Get goLiveDate configuration |
+| PUT | `/api/reconciliation/config/go-live-date` | Manually set goLiveDate |
 
 ---
 
@@ -330,22 +399,26 @@ For warehouses with bins (e.g., Warehouse 10):
 SQLQueries: SELECT * FROM OBBQ WHERE ItemCode = '{itemCode}' AND BinAbs = {binAbs} AND SnBMDAbs IN (SELECT AbsEntry FROM OBTN WHERE DistNumber = '{batchNum}')
 ```
 
-### Query Recent Documents
+### Query Documents by Date Range
 
-PurchaseDeliveryNotes (last 24h):
-```
-/PurchaseDeliveryNotes?$filter=DocDate ge datetime'{yesterday}'&$select=DocEntry,DocNum,DocDate,DocumentLines
-```
+The system uses the moving date window (see above) to determine the date range.
 
-StockTransfers (last 24h):
+PurchaseDeliveryNotes:
 ```
-/StockTransfers?$filter=DocDate ge datetime'{yesterday}'&$select=DocEntry,DocNum,DocDate,StockTransferLines
+/PurchaseDeliveryNotes?$filter=DocDate ge datetime'{fromDate}' and DocDate le datetime'{toDate}'
 ```
 
-DeliveryNotes (last 24h):
+StockTransfers:
 ```
-/DeliveryNotes?$filter=DocDate ge datetime'{yesterday}'&$select=DocEntry,DocNum,DocDate,DocumentLines
+/StockTransfers?$filter=DocDate ge datetime'{fromDate}' and DocDate le datetime'{toDate}'
 ```
+
+DeliveryNotes:
+```
+/DeliveryNotes?$filter=DocDate ge datetime'{fromDate}' and DocDate le datetime'{toDate}'
+```
+
+**Pagination:** SAP returns paginated results. The `fetchAllPages()` helper follows `odata.nextLink` to get all documents (default page size: 20).
 
 ---
 

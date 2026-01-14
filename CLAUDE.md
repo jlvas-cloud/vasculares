@@ -171,7 +171,7 @@ ENABLE_CRON_JOBS=true                # Set to false to disable nightly job
 - `server/docs/sap-sqlqueries-setup.md` - SAP SQLQueries configuration for inventory sync
 - `server/docs/sap-reconciliation-design.md` - **SAP reconciliation system design (IMPLEMENTED)**
 - `server/docs/exportar-inventario-sap.md` - Manual CSV export from SAP (fallback)
-- `~/.claude/plans/gentle-frolicking-aurora.md` - Active planning document
+- `server/docs/PLAN.md` - Active planning document (feature tracking, backlog)
 
 ## Current State
 

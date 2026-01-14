@@ -1,6 +1,6 @@
 # Vasculares - System Onboarding Guide
 
-**Last Updated:** 2026-01-12
+**Last Updated:** 2026-01-13
 
 This guide walks through setting up the Vasculares inventory system with SAP B1 integration.
 
@@ -133,6 +133,9 @@ node scripts/sync-inventory-from-sap.js
   - Filters by warehouse/bin for each location
   - Creates `Lote` records with quantities and expiry dates
   - Updates `Inventario` aggregation
+- **Sets `goLiveDate`** for reconciliation (first sync only)
+
+**Important:** The sync script automatically sets the `goLiveDate` for the reconciliation system. This marks the point from which the system will check for external SAP documents. Documents created before this date are considered "pre-existing" and won't be flagged as external.
 
 **Options:**
 ```bash
@@ -222,6 +225,9 @@ No products to sync
 | `consignaciones` | Warehouse→Centro transfers |
 | `consumos` | Consumption records at centros |
 | `goodsReceipts` | Incoming stock from suppliers |
+| `vascularesconfig` | Per-company config (reconciliation goLiveDate) |
+| `externalsapdocuments` | SAP documents not created by our app |
+| `reconciliationruns` | History of reconciliation job runs |
 
 ---
 

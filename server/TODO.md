@@ -133,12 +133,12 @@ Before creating a goods receipt, the system now validates each batch against SAP
 ## SAP Reconciliation System - COMPLETE
 
 **Documented:** 2026-01-13
-**Status:** IMPLEMENTED (2026-01-13)
+**Status:** IMPLEMENTED (2026-01-13, updated with Moving Date Window)
 **Design Doc:** `docs/sap-reconciliation-design.md`
 
 **Problem:** Users can make movements directly in SAP that bypass our app, causing drift between local database and SAP.
 
-**Solution:** Two complementary mechanisms:
+**Solution:** Two complementary mechanisms + moving date window:
 
 ### 1. Pre-Operation Guard (Real-Time Protection)
 
@@ -219,8 +219,15 @@ Check SAP for documents involving our products that weren't created by our app.
 
 **Nightly Job:**
 - Schedule: 2:00 AM daily (configurable via `RECONCILIATION_CRON` env var)
-- Lookback: 24 hours (configurable via `RECONCILIATION_LOOKBACK_HOURS`)
+- Uses **moving date window** (not fixed lookback)
 - Auto-starts on server startup (disable with `ENABLE_CRON_JOBS=false`)
+
+**Moving Date Window Logic:**
+| Scenario | Date Range |
+|----------|------------|
+| First run | From `goLiveDate` (set by sync script) to now |
+| Subsequent runs | From last successful run's `completedAt` to now |
+| Custom range | User-specified `fromDate` and `toDate` via dashboard |
 
 **Manual Run:**
 ```bash
@@ -231,24 +238,29 @@ node jobs/nightlyReconciliation.js --run-now --company-id=<id>
 ### Phase 4: On-Demand API + Admin Dashboard - COMPLETE
 
 **API Endpoints:**
-- `POST /api/reconciliation/run` - Trigger on-demand reconciliation
+- `POST /api/reconciliation/run` - Trigger on-demand reconciliation (accepts `fromDate`, `toDate`)
 - `GET /api/reconciliation/status` - Get latest run + pending count
 - `GET /api/reconciliation/runs` - Get run history
 - `GET /api/reconciliation/external-documents` - Get external docs (filtered by status)
 - `PUT /api/reconciliation/external-documents/:id/status` - Update doc status
+- `GET /api/reconciliation/config` - Get goLiveDate configuration
+- `PUT /api/reconciliation/config/go-live-date` - Manually set goLiveDate
 
 **Files Created:**
 - `controllers/reconciliation.js` - API controller
 - `routes/reconciliation.js` - API routes
+- `models/vascularesConfigModel.js` - Per-company config (goLiveDate)
 
 **Frontend:**
 - `lib/api.js` - Added `reconciliationApi` with all endpoints
 - `pages/Reconciliation.jsx` - Admin dashboard with:
-  - Status cards (last run, pending count, docs checked)
+  - Status cards (last run, pending count, docs checked, config status)
   - "Verificar Ahora" button for on-demand reconciliation
+  - **"Rango Personalizado" button** for custom date range
+  - Warning banner when goLiveDate not configured
   - External documents list with filtering by status
   - Actions: Acknowledge, Ignore (with notes)
-  - Run history table
+  - Run history table with date range info
 - `components/Layout.jsx` - Added navigation link under Admin section
 
 **Document Statuses:**

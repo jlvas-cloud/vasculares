@@ -1,0 +1,336 @@
+# Vasculares Project - Active Planning Document
+
+**Last Updated:** 2026-01-13 (Moving Date Window)
+
+---
+
+## COMPLETED FEATURES
+
+### 1. Packing List Upload Feature - COMPLETE
+
+**Status:** Implementation complete, pending real-world testing
+
+Allows uploading packing list images to extract product data using Claude Vision API.
+
+**Files Created/Modified:**
+- `server/services/extractionService.js` - Claude Vision API integration
+- `server/middleware/upload.js` - Multer config for file uploads
+- `client/src/components/FileUploader.jsx` - Drag & drop component
+- `server/controllers/goodsReceipt.js` - Added `extractFromPackingList` endpoint
+- `server/routes/goodsReceipt.js` - Added `POST /extract` route
+- `client/src/pages/GoodsReceipt.jsx` - Tab UI (Manual | Desde Packing List)
+- `client/src/lib/api.js` - Added `goodsReceiptApi.extract()` method
+
+**Remaining:** Test with real packing list images
+
+---
+
+### 2. SAP Integration Bug Fixes - COMPLETE
+
+**Status:** All 18 issues resolved (16 fixed, 2 won't fix)
+
+See `server/ISSUES.md` for full details.
+
+**Key Fixes:**
+- Retry race conditions using optimistic locking
+- Login mutex to prevent concurrent authentication
+- OData injection prevention with sanitizeODataValue()
+- Request timeouts (30 seconds)
+- MAX_RETRIES=5 limit on all retry functions
+- Field standardization: all models now use `sapIntegration` object
+- Status enum standardization: PENDING, SYNCED, FAILED, RETRYING
+
+**Won't Fix (documented):**
+- #13 TLS Certificate Validation - SAP on internal network
+- #17 Connection Pooling - Low volume app
+
+---
+
+### 3. Lote Uniqueness Constraint - COMPLETE
+
+**Status:** Implemented 2026-01-12
+
+**Change:** Added unique compound index to enforce one Lote record per (product, lotNumber, location).
+
+**File Modified:** `server/models/loteModel.js`
+
+```javascript
+// Before: { productId: 1, lotNumber: 1 }
+// After:  { productId: 1, lotNumber: 1, currentLocationId: 1 }, { unique: true }
+```
+
+**Why:**
+- System already creates separate lote records per location (warehouse vs centro)
+- Unique index enforces this at database level, preventing duplicate records from race conditions
+- Multiple shipments of same lot to same location correctly UPDATE the single record's quantity
+
+**Impact:** No code changes needed - all queries already filter by location.
+
+---
+
+## COMPLETED FEATURES (continued)
+
+### 4. One-Step SAP Inventory Sync for Onboarding - COMPLETE
+
+**Status:** IMPLEMENTED - Ready for testing
+
+**Goal:** Pull ALL existing inventory from SAP into the local app during onboarding.
+
+#### Files Created
+
+| File | Purpose |
+|------|---------|
+| `server/services/sapSyncService.js` | Core sync logic - queries SAP, creates Lotes |
+| `server/scripts/sync-inventory-from-sap.js` | CLI script for one-time sync |
+
+#### Usage
+
+```bash
+# Dry run (see what would be synced without saving)
+node scripts/sync-inventory-from-sap.js --dry-run
+
+# Full sync
+node scripts/sync-inventory-from-sap.js
+
+# Sync specific location only
+node scripts/sync-inventory-from-sap.js --location "CDC"
+
+# Sync specific product only
+node scripts/sync-inventory-from-sap.js --product "419113"
+
+# Verbose output
+node scripts/sync-inventory-from-sap.js --verbose
+```
+
+#### Prerequisites
+
+1. Products exist with `sapItemCode` (run `import-orsiro-codes.js`)
+2. Locations exist with `sapIntegration.warehouseCode` (run `import-centros.js`)
+3. SAP credentials in `.env` (SAP_B1_SERVICE_URL, SAP_B1_USERNAME, etc.)
+
+#### How It Works
+
+```
+For each Location (warehouse/centro):
+  For each Product (with sapItemCode):
+    1. Query SAP BatchNumberDetails for batch stock
+    2. Filter batches for this location (by warehouseCode/binAbsEntry)
+    3. Create/Update Lote records (uses unique constraint)
+    4. Update Inventario aggregation
+```
+
+#### Onboarding Flow (Complete)
+
+| Step | Script | Status |
+|------|--------|--------|
+| 1. Import products | `import-orsiro-codes.js` | Ready |
+| 2. Import locations | `import-centros.js` | Ready |
+| 3. Link cardCode in UI | Manual (select Socio de Negocio) | Ready |
+| 4. Sync inventory | `sync-inventory-from-sap.js` | **NEW** |
+
+#### Notes
+
+- The sync queries SAP's BatchNumberDetails endpoint
+- Falls back to basic batch query if advanced queries unavailable
+- Uses the new unique Lote constraint (productId + lotNumber + locationId)
+- Creates historia entries for audit trail
+- Updates Inventario aggregation after each product
+
+---
+
+### 5. Reset Script for Testing - COMPLETE
+
+**Status:** Implemented 2026-01-12
+
+Script to clear inventory data while preserving master data (products, locations).
+
+**File:** `server/scripts/reset-inventory-data.js`
+
+```bash
+node scripts/reset-inventory-data.js --dry-run   # Preview
+node scripts/reset-inventory-data.js --confirm   # Delete
+```
+
+**Deletes:** lotes, inventario, consignaciones, consumos, goodsreceipts, transacciones
+**Keeps:** productos, locaciones
+
+---
+
+### 6. SAP Batch Validation - COMPLETE
+
+**Status:** Implemented 2026-01-13
+
+Validates batch-product relationship against SAP before creating goods receipts.
+
+**Files Modified:**
+- `server/services/sapService.js` - Added `validateBatchItem()`, `validateBatchItems()`
+- `server/controllers/goodsReceipt.js` - Added validation endpoint
+- `client/src/pages/GoodsReceipt.jsx` - Added mismatch dialog
+
+**Behavior:** Blocks creation if batch belongs to different product in SAP.
+
+---
+
+### 7. SAP Reconciliation System - COMPLETE
+
+**Status:** Implemented 2026-01-13 (with Moving Date Window)
+
+Detects SAP drift (when users make movements directly in SAP that bypass our app).
+
+#### Two-Mechanism Approach
+
+| Mechanism | Purpose | When |
+|-----------|---------|------|
+| **Pre-Operation Guards** | Prevent bad transactions | Real-time, before each movement |
+| **Document Reconciliation** | Audit/visibility | Nightly (2 AM) + on-demand |
+
+#### Pre-Operation Guards
+
+Before any stock movement (consignment or consumption):
+1. Queries SAP OIBT/OBBQ for batch stock at source location
+2. Verifies quantity is sufficient
+3. Blocks operation if mismatch, shows warning dialog
+
+**Files:**
+- `server/services/sapService.js` - `verifyBatchStockForTransfer()`, `getAllBatchStockAtLocation()`
+- `server/controllers/consignaciones.js` - `validateSapStock`, `previewFifo`
+- `server/controllers/consumption.js` - `validateSapStock`
+- `client/src/pages/Planning.jsx` - Validation + mismatch dialog
+- `client/src/pages/Consumption.jsx` - Validation + mismatch dialog
+
+#### Document Reconciliation
+
+Checks SAP for documents involving our products that weren't created by our app.
+
+**Documents Checked:**
+- PurchaseDeliveryNotes (Goods Receipts)
+- StockTransfers (Consignments)
+- DeliveryNotes (Consumptions)
+
+**Moving Date Window (2026-01-13):**
+
+Instead of a fixed lookback period, reconciliation uses a smart moving window:
+
+| Scenario | Date Range |
+|----------|------------|
+| First run | From `goLiveDate` (set during sync) to now |
+| Subsequent runs | From last successful run's `completedAt` to now |
+| Custom range | User-specified `fromDate` and `toDate` |
+
+This prevents flagging old documents as "external" after initial setup.
+
+**Files Created/Modified:**
+- `server/models/externalSapDocumentModel.js` - Tracks external documents
+- `server/models/reconciliationRunModel.js` - Tracks run history
+- `server/models/vascularesConfigModel.js` - **NEW** Stores `goLiveDate` config
+- `server/services/reconciliationService.js` - Core logic + `calculateDateWindow()`, `getReconciliationConfig()`, `setGoLiveDate()`
+- `server/services/sapService.js` - `getRecentPurchaseDeliveryNotes()`, `getRecentStockTransfers()`, `getRecentDeliveryNotes()`, `fetchAllPages()`
+- `server/controllers/reconciliation.js` - API controller
+- `server/routes/reconciliation.js` - API routes
+- `server/jobs/nightlyReconciliation.js` - Cron job (2 AM daily)
+- `server/scripts/sync-inventory-from-sap.js` - **UPDATED** Sets `goLiveDate` on first sync
+- `server/getModel.js` - Added `getVascularesConfigModel()`
+- `client/src/pages/Reconciliation.jsx` - Admin dashboard with date range selector
+- `client/src/lib/api.js` - `reconciliationApi`
+
+**API Endpoints:**
+- `POST /api/reconciliation/run` - Trigger on-demand (accepts `fromDate`, `toDate`)
+- `GET /api/reconciliation/status` - Latest run + pending count
+- `GET /api/reconciliation/runs` - Run history
+- `GET /api/reconciliation/external-documents` - External docs list
+- `PUT /api/reconciliation/external-documents/:id/status` - Update status
+- `GET /api/reconciliation/config` - **NEW** Get goLiveDate config
+- `PUT /api/reconciliation/config/go-live-date` - **NEW** Set goLiveDate manually
+
+**Dashboard Features:**
+- Status cards (last run, pending count, docs checked, config status)
+- "Verificar Ahora" button for on-demand runs
+- **"Rango Personalizado" button** for custom date range
+- Warning banner when goLiveDate not configured
+- External documents list with filtering
+- Actions: Acknowledge, Ignore (with notes)
+- Run history table with date range info
+
+**Configuration:**
+```env
+RECONCILIATION_CRON=0 2 * * *          # Schedule (default: 2 AM)
+ENABLE_CRON_JOBS=true                  # Set to false to disable
+```
+
+**Bug Fixes (2026-01-13):**
+1. Fixed SAP response parsing (was accessing `.value` on raw Response)
+2. Added pagination support (`fetchAllPages()` follows `odata.nextLink`)
+3. Added stale run detection (runs >1 hour auto-marked as FAILED)
+
+---
+
+## NEXT STEPS
+
+### Testing Phase
+1. ✅ Reset script created and tested
+2. ✅ SAP Reconciliation System implemented
+3. ✅ Moving date window implemented (goLiveDate + incremental checks)
+4. Test SAP inventory sync with real data
+5. Test reconciliation dashboard at `/reconciliation`
+6. Start app and verify UI shows correct inventory
+7. Test end-to-end workflows (consignment, consumption)
+
+### Before Production
+1. Clear test data with `reset-inventory-data.js --confirm`
+2. Run final onboarding steps (see `server/ONBOARDING.md`)
+3. Test with real SAP data
+4. Verify SAP documents are created correctly
+5. Run a reconciliation to verify no external documents missed
+
+---
+
+## REFERENCE: Data Model Summary
+
+### Core Models
+
+| Model | Purpose | SAP Integration |
+|-------|---------|-----------------|
+| `Producto` | Product catalog | `sapItemCode` links to SAP |
+| `Locacion` | Warehouses/Centros | `sapIntegration.warehouseCode`, `binAbsEntry` |
+| `Lote` | Batch/lot tracking | Created locally, used in SAP documents |
+| `Inventario` | Aggregated stock view | Denormalized from Lotes |
+| `Consignacion` | Warehouse→Centro transfers | Creates StockTransfers in SAP |
+| `Consumo` | Consumption records | Creates DeliveryNotes in SAP |
+| `GoodsReceipt` | Incoming stock | Creates PurchaseDeliveryNotes in SAP |
+| `Transaccion` | Movement audit log | Not synced to SAP |
+
+### Reconciliation Models
+
+| Model | Purpose |
+|-------|---------|
+| `VascularesConfig` | Per-company config (goLiveDate for reconciliation) |
+| `ExternalSapDocument` | SAP documents not created by our app |
+| `ReconciliationRun` | History of reconciliation job runs |
+
+### SAP Service Capabilities
+
+**Queries:**
+- `getItemInventory(itemCode, warehouseCode)` - Stock levels
+- `getItemBatches(itemCode)` - Batch details
+- `getCustomers(search, limit)` - Business partners
+
+**Document Creation:**
+- `createStockTransfer()` - Warehouse→Centro movements
+- `createDeliveryNote()` - Consumption/sales
+
+---
+
+## BACKLOG (Future Considerations)
+
+From ISSUES.md Architectural Improvements:
+- A. SAP Document Lookup Before Creation (duplicate prevention)
+- ~~B. Reconciliation Process (background job)~~ ✅ DONE (2026-01-13)
+- C. Centralized Error Handling
+- D. Exponential Backoff for Retries
+- E. Error Analytics/Tracking
+
+### Additional Reconciliation Enhancements (Low Priority)
+- Email alerts for external documents detected
+- Auto-import option for certain document types
+- Quantity reconciliation (compare totals, not just documents)
+- Webhook from SAP (if SAP partner can implement)
