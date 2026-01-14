@@ -295,3 +295,41 @@ node scripts/sync-inventory-from-sap.js
    - Clear test data if needed
    - Run final sync from SAP
    - Begin normal operations
+
+---
+
+## Handling External SAP Documents
+
+When users create documents directly in SAP (bypassing the app), the reconciliation system detects them.
+
+### Running Reconciliation
+
+1. Go to `/reconciliation` in the app
+2. Click **"Verificar Ahora"** to scan SAP
+3. External documents appear in the list
+
+### Importing External Documents
+
+If someone created a document in SAP that should be reflected locally:
+
+1. Click **"Importar"** on the document
+2. Review the validation:
+   - **Green**: Ready to import
+   - **Red**: Missing products/locations - add them first
+   - **Yellow**: Import dependency documents first
+3. Click **"Importar"** to confirm
+
+### Document Types
+
+| SAP Document | What Gets Created |
+|--------------|-------------------|
+| PurchaseDeliveryNote | Lotes + GoodsReceipt |
+| StockTransfer | Updates Lotes + Consignacion |
+| DeliveryNote | Reduces Lotes + Consumo |
+
+### Alternative Actions
+
+- **Reconocer**: Mark as reviewed (don't import)
+- **Ignorar**: Mark as not relevant
+
+**Full documentation:** `docs/external-document-import.md`

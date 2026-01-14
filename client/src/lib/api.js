@@ -197,6 +197,10 @@ export const reconciliationApi = {
   getExternalDocuments: (params) => api.get('/reconciliation/external-documents', { params }),
   // Update document status
   updateDocumentStatus: (id, status, notes) => api.put(`/reconciliation/external-documents/${id}/status`, { status, notes }),
+  // Validate external document for import
+  validateDocument: (id) => api.post(`/reconciliation/external-documents/${id}/validate`),
+  // Import external document
+  importDocument: (id) => api.post(`/reconciliation/external-documents/${id}/import`),
   // Get reconciliation config (goLiveDate, etc.)
   getConfig: () => api.get('/reconciliation/config'),
   // Set goLiveDate manually

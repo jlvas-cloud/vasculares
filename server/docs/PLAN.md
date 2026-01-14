@@ -1,6 +1,6 @@
 # Vasculares Project - Active Planning Document
 
-**Last Updated:** 2026-01-13 (Moving Date Window)
+**Last Updated:** 2026-01-14 (External Document Import)
 
 ---
 
@@ -264,16 +264,54 @@ ENABLE_CRON_JOBS=true                  # Set to false to disable
 
 ---
 
+### 8. External Document Import - COMPLETE
+
+**Status:** Implemented 2026-01-14
+
+Allows importing external SAP documents (detected by reconciliation) into the local database.
+
+**Files Created/Modified:**
+- `server/services/externalImportService.js` - Core validation and import logic
+- `server/controllers/reconciliation.js` - Added `validateDocument`, `importDocument` endpoints
+- `server/routes/reconciliation.js` - Added validate/import routes
+- `client/src/lib/api.js` - Added `validateDocument()`, `importDocument()` methods
+- `client/src/pages/Reconciliation.jsx` - Added import dialog with validation preview
+
+**API Endpoints:**
+- `POST /api/reconciliation/external-documents/:id/validate` - Validate document
+- `POST /api/reconciliation/external-documents/:id/import` - Import document
+
+**Features:**
+- **Validation before import**: Checks products exist, locations exist, batches exist (for transfers/consumptions)
+- **Preview of changes**: Shows lotes to create/update before confirming
+- **Dependency detection**: If batch missing, suggests importing the goods receipt first
+- **Support for all document types**:
+  - PurchaseDeliveryNote → Creates Lotes + GoodsReceipt
+  - StockTransfer → Updates Lotes + Creates Consignacion
+  - DeliveryNote → Reduces Lotes + Creates Consumo
+
+**Usage:**
+1. Go to `/reconciliation` dashboard
+2. Run a reconciliation check to detect external documents
+3. Click **"Importar"** on any pending document
+4. Review validation result (green=ready, red=errors, yellow=dependencies)
+5. Click **"Importar"** to confirm
+
+**Documentation:** `docs/external-document-import.md`
+
+---
+
 ## NEXT STEPS
 
 ### Testing Phase
 1. ✅ Reset script created and tested
 2. ✅ SAP Reconciliation System implemented
 3. ✅ Moving date window implemented (goLiveDate + incremental checks)
-4. Test SAP inventory sync with real data
-5. Test reconciliation dashboard at `/reconciliation`
-6. Start app and verify UI shows correct inventory
-7. Test end-to-end workflows (consignment, consumption)
+4. ✅ External document import implemented
+5. Test SAP inventory sync with real data
+6. Test reconciliation dashboard at `/reconciliation`
+7. Start app and verify UI shows correct inventory
+8. Test end-to-end workflows (consignment, consumption)
 
 ### Before Production
 1. Clear test data with `reset-inventory-data.js --confirm`
@@ -331,6 +369,6 @@ From ISSUES.md Architectural Improvements:
 
 ### Additional Reconciliation Enhancements (Low Priority)
 - Email alerts for external documents detected
-- Auto-import option for certain document types
+- ~~Auto-import option for certain document types~~ ✅ Manual import implemented (2026-01-14)
 - Quantity reconciliation (compare totals, not just documents)
 - Webhook from SAP (if SAP partner can implement)

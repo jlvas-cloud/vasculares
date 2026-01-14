@@ -3,6 +3,7 @@
  * API endpoints for SAP document reconciliation
  */
 const reconciliationService = require('../services/reconciliationService');
+const externalImportService = require('../services/externalImportService');
 
 /**
  * POST /api/reconciliation/run
@@ -167,6 +168,43 @@ exports.setGoLiveDate = async (req, res, next) => {
     res.json(result);
   } catch (error) {
     console.error('Error setting goLiveDate:', error);
+    next(error);
+  }
+};
+
+/**
+ * POST /api/reconciliation/external-documents/:id/validate
+ * Validate if an external document can be imported
+ */
+exports.validateDocument = async (req, res, next) => {
+  try {
+    const { id } = req.params;
+
+    const result = await externalImportService.validateImport(req.companyId, id);
+    res.json(result);
+  } catch (error) {
+    console.error('Error validating document:', error);
+    next(error);
+  }
+};
+
+/**
+ * POST /api/reconciliation/external-documents/:id/import
+ * Import an external document after validation
+ */
+exports.importDocument = async (req, res, next) => {
+  try {
+    const { id } = req.params;
+
+    const result = await externalImportService.importDocument(req.companyId, id, req.user);
+
+    if (!result.success) {
+      return res.status(400).json(result);
+    }
+
+    res.json(result);
+  } catch (error) {
+    console.error('Error importing document:', error);
     next(error);
   }
 };

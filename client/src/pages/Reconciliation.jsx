@@ -6,7 +6,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../co
 import { Badge } from '../components/ui/badge';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '../components/ui/dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select';
-import { RefreshCw, AlertTriangle, CheckCircle2, Clock, FileText, Package, ChevronDown, ChevronUp, Calendar, Settings } from 'lucide-react';
+import { RefreshCw, AlertTriangle, CheckCircle2, Clock, FileText, Package, ChevronDown, ChevronUp, Calendar, Settings, Download, Loader2, ArrowRight, Link } from 'lucide-react';
 import { useToast } from '../components/ui/toast';
 import { format, formatDistanceToNow } from 'date-fns';
 import { es } from 'date-fns/locale';
@@ -51,6 +51,10 @@ export default function Reconciliation() {
   const [customDateDialogOpen, setCustomDateDialogOpen] = useState(false);
   const [customFromDate, setCustomFromDate] = useState('');
   const [customToDate, setCustomToDate] = useState('');
+  const [importDialogOpen, setImportDialogOpen] = useState(false);
+  const [importDoc, setImportDoc] = useState(null);
+  const [validationResult, setValidationResult] = useState(null);
+  const [isValidating, setIsValidating] = useState(false);
   const queryClient = useQueryClient();
   const toast = useToast();
 
@@ -131,10 +135,66 @@ export default function Reconciliation() {
     },
   });
 
+  // Import external document
+  const importMutation = useMutation({
+    mutationFn: (id) => reconciliationApi.importDocument(id),
+    onSuccess: () => {
+      queryClient.invalidateQueries(['reconciliation-status']);
+      queryClient.invalidateQueries(['external-documents']);
+      setImportDialogOpen(false);
+      setImportDoc(null);
+      setValidationResult(null);
+      toast.success('Documento importado exitosamente');
+    },
+    onError: (error) => {
+      toast.error(error.response?.data?.message || error.response?.data?.error || 'Error al importar documento');
+    },
+  });
+
   const handleAction = (doc, action) => {
     setSelectedDoc(doc);
     setSelectedAction(action);
     setActionDialogOpen(true);
+  };
+
+  // Open import dialog and validate
+  const handleImport = async (doc) => {
+    setImportDoc(doc);
+    setImportDialogOpen(true);
+    setValidationResult(null);
+    setIsValidating(true);
+
+    try {
+      const result = await reconciliationApi.validateDocument(doc._id);
+      setValidationResult(result.data);
+    } catch (error) {
+      setValidationResult({
+        canImport: false,
+        errors: [{ type: 'API_ERROR', message: error.response?.data?.error || 'Error al validar documento' }],
+        dependencies: [],
+        preview: null,
+      });
+    } finally {
+      setIsValidating(false);
+    }
+  };
+
+  const confirmImport = () => {
+    if (importDoc) {
+      importMutation.mutate(importDoc._id);
+    }
+  };
+
+  // Handle importing a dependency document first
+  const handleImportDependency = async (depDocId) => {
+    // Close current dialog
+    setImportDialogOpen(false);
+
+    // Find the dependency document and open import for it
+    const depDoc = externalDocs?.find((d) => d._id === depDocId);
+    if (depDoc) {
+      setTimeout(() => handleImport(depDoc), 100);
+    }
   };
 
   const confirmAction = () => {
@@ -381,6 +441,14 @@ export default function Reconciliation() {
                       {doc.status === 'PENDING_REVIEW' && (
                         <>
                           <Button
+                            variant="default"
+                            size="sm"
+                            onClick={() => handleImport(doc)}
+                          >
+                            <Download className="mr-1 h-3 w-3" />
+                            Importar
+                          </Button>
+                          <Button
                             variant="outline"
                             size="sm"
                             onClick={() => handleAction(doc, 'ACKNOWLEDGED')}
@@ -592,6 +660,176 @@ export default function Reconciliation() {
                 </>
               ) : (
                 'Verificar'
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Import Dialog */}
+      <Dialog open={importDialogOpen} onOpenChange={setImportDialogOpen}>
+        <DialogContent className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>Importar Documento Externo</DialogTitle>
+            <DialogDescription>
+              Importar este documento de SAP a la aplicación, creando los registros locales correspondientes.
+            </DialogDescription>
+          </DialogHeader>
+
+          {importDoc && (
+            <div className="py-4">
+              {/* Document Info */}
+              <div className="bg-muted rounded p-3 mb-4">
+                <div className="flex items-center gap-2">
+                  <FileText className="h-4 w-4" />
+                  <span className="font-medium">
+                    {DOC_TYPE_LABELS[importDoc.sapDocType]} #{importDoc.sapDocNum}
+                  </span>
+                </div>
+                <p className="text-sm text-muted-foreground mt-1">
+                  {importDoc.items?.length || 0} productos, {format(new Date(importDoc.sapDocDate), 'PPP', { locale: es })}
+                </p>
+              </div>
+
+              {/* Loading State */}
+              {isValidating && (
+                <div className="flex items-center justify-center py-8">
+                  <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+                  <span className="ml-2 text-muted-foreground">Validando...</span>
+                </div>
+              )}
+
+              {/* Validation Result */}
+              {validationResult && !isValidating && (
+                <div className="space-y-4">
+                  {/* Status Banner */}
+                  {validationResult.canImport ? (
+                    <div className="flex items-center gap-2 p-3 bg-green-50 dark:bg-green-950 border border-green-200 dark:border-green-800 rounded">
+                      <CheckCircle2 className="h-5 w-5 text-green-600" />
+                      <span className="font-medium text-green-800 dark:text-green-200">
+                        Listo para importar
+                      </span>
+                    </div>
+                  ) : (
+                    <div className="flex items-center gap-2 p-3 bg-red-50 dark:bg-red-950 border border-red-200 dark:border-red-800 rounded">
+                      <AlertTriangle className="h-5 w-5 text-red-600" />
+                      <span className="font-medium text-red-800 dark:text-red-200">
+                        No se puede importar
+                      </span>
+                    </div>
+                  )}
+
+                  {/* Errors */}
+                  {validationResult.errors?.length > 0 && (
+                    <div className="space-y-2">
+                      <h4 className="text-sm font-medium text-red-600">Errores:</h4>
+                      {validationResult.errors.map((error, idx) => (
+                        <div key={idx} className="flex items-start gap-2 p-2 bg-red-50 dark:bg-red-950/50 rounded text-sm">
+                          <AlertTriangle className="h-4 w-4 text-red-500 mt-0.5 flex-shrink-0" />
+                          <span>{error.message}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {/* Dependencies */}
+                  {validationResult.dependencies?.length > 0 && (
+                    <div className="space-y-2">
+                      <h4 className="text-sm font-medium text-yellow-600">Dependencias encontradas:</h4>
+                      <p className="text-sm text-muted-foreground">
+                        Importa primero estos documentos para resolver las dependencias:
+                      </p>
+                      {validationResult.dependencies.map((dep, idx) => (
+                        <div key={idx} className="flex items-center justify-between p-3 bg-yellow-50 dark:bg-yellow-950/50 border border-yellow-200 dark:border-yellow-800 rounded">
+                          <div className="flex items-center gap-2">
+                            <Link className="h-4 w-4 text-yellow-600" />
+                            <span className="font-medium">
+                              {DOC_TYPE_LABELS[dep.sapDocType]} #{dep.sapDocNum}
+                            </span>
+                            <span className="text-sm text-muted-foreground">
+                              - {dep.message}
+                            </span>
+                          </div>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => handleImportDependency(dep.docId)}
+                          >
+                            <ArrowRight className="mr-1 h-3 w-3" />
+                            Importar primero
+                          </Button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {/* Preview */}
+                  {validationResult.preview && validationResult.canImport && (
+                    <div className="space-y-3">
+                      <h4 className="text-sm font-medium">Vista previa de cambios:</h4>
+
+                      {/* Lotes to Create */}
+                      {validationResult.preview.lotesToCreate?.length > 0 && (
+                        <div>
+                          <p className="text-xs text-muted-foreground mb-1">Lotes a crear:</p>
+                          <div className="space-y-1">
+                            {validationResult.preview.lotesToCreate.map((lote, idx) => (
+                              <div key={idx} className="flex items-center gap-2 p-2 bg-green-50 dark:bg-green-950/50 rounded text-sm">
+                                <Badge variant="outline" className="text-green-600">+{lote.quantity}</Badge>
+                                <span className="font-mono text-xs">{lote.productCode}</span>
+                                <span>Lote: {lote.lotNumber}</span>
+                                <span className="text-muted-foreground">→ {lote.locationName}</span>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Lotes to Update */}
+                      {validationResult.preview.lotesToUpdate?.length > 0 && (
+                        <div>
+                          <p className="text-xs text-muted-foreground mb-1">Lotes a actualizar:</p>
+                          <div className="space-y-1">
+                            {validationResult.preview.lotesToUpdate.map((lote, idx) => (
+                              <div key={idx} className="flex items-center gap-2 p-2 bg-blue-50 dark:bg-blue-950/50 rounded text-sm">
+                                <Badge variant="outline" className={lote.addQuantity > 0 ? 'text-green-600' : 'text-red-600'}>
+                                  {lote.addQuantity > 0 ? '+' : ''}{lote.addQuantity}
+                                </Badge>
+                                <span className="font-mono text-xs">{lote.productCode}</span>
+                                <span>Lote: {lote.lotNumber}</span>
+                                <span className="text-muted-foreground">
+                                  {lote.locationName} ({lote.currentQuantity} → {lote.newQuantity})
+                                </span>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setImportDialogOpen(false)}>
+              Cancelar
+            </Button>
+            <Button
+              onClick={confirmImport}
+              disabled={!validationResult?.canImport || importMutation.isPending}
+            >
+              {importMutation.isPending ? (
+                <>
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  Importando...
+                </>
+              ) : (
+                <>
+                  <Download className="mr-2 h-4 w-4" />
+                  Importar
+                </>
               )}
             </Button>
           </DialogFooter>

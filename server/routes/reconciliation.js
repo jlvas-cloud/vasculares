@@ -25,6 +25,12 @@ router.get('/external-documents', reconciliationController.getExternalDocuments)
 // Update external document status
 router.put('/external-documents/:id/status', reconciliationController.updateDocumentStatus);
 
+// Validate external document for import
+router.post('/external-documents/:id/validate', reconciliationController.validateDocument);
+
+// Import external document
+router.post('/external-documents/:id/import', reconciliationController.importDocument);
+
 // Get reconciliation config (goLiveDate, etc.)
 router.get('/config', reconciliationController.getConfig);
 

@@ -107,7 +107,7 @@ node scripts/reset-inventory-data.js --confirm
 node scripts/sync-inventory-from-sap.js
 ```
 
-## Recent Completed Work (2026-01-12, 2026-01-13)
+## Recent Completed Work (2026-01-12, 2026-01-13, 2026-01-14)
 
 1. **SAP Bug Fixes** - 18 issues fixed (see ISSUES.md)
    - Race condition fixes with optimistic locking
@@ -146,6 +146,14 @@ node scripts/sync-inventory-from-sap.js
    - Nightly job runs at 2 AM (configurable)
    - See `server/docs/sap-reconciliation-design.md`
 
+8. **External Document Import** (2026-01-14)
+   - Import external SAP documents into local database
+   - Validation before import (products, locations, batches)
+   - Dependency detection (import prerequisites first)
+   - Preview of changes before confirming
+   - Support for: PurchaseDeliveryNote, StockTransfer, DeliveryNote
+   - See `server/docs/external-document-import.md`
+
 ## Environment Variables
 
 ```env
@@ -171,6 +179,7 @@ ENABLE_CRON_JOBS=true                # Set to false to disable nightly job
 - `server/docs/sap-sqlqueries-setup.md` - SAP SQLQueries configuration for inventory sync
 - `server/docs/sap-sqltable-allowlist.md` - **SAP tables needed in b1s_sqltable.conf (for production setup)**
 - `server/docs/sap-reconciliation-design.md` - SAP reconciliation system design (IMPLEMENTED)
+- `server/docs/external-document-import.md` - External SAP document import feature (IMPLEMENTED)
 - `server/docs/exportar-inventario-sap.md` - Manual CSV export from SAP (fallback)
 - `server/docs/PLAN.md` - Active planning document (feature tracking, backlog)
 

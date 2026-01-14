@@ -296,6 +296,41 @@ node jobs/nightlyReconciliation.js --run-now --company-id=<id>
 **Dependency Added:**
 - `node-cron@^3.0.3` - For scheduling nightly jobs
 
+### External Document Import Feature (2026-01-14)
+**Status:** COMPLETE
+
+Allows importing external SAP documents (created directly in SAP, bypassing our app) into the local database.
+
+**Files Created:**
+- `services/externalImportService.js` - Core validation and import logic
+- Updated `controllers/reconciliation.js` - Added validate/import endpoints
+- Updated `routes/reconciliation.js` - Added routes
+- Updated `client/src/lib/api.js` - Added API methods
+- Updated `client/src/pages/Reconciliation.jsx` - Added import UI
+
+**Features:**
+- **Validation before import**: Checks products, locations, batch existence
+- **Preview of changes**: Shows lotes to create/update before confirming
+- **Dependency detection**: Suggests importing prerequisite documents first
+- **Support for all document types**:
+  - PurchaseDeliveryNote → Creates Lotes + GoodsReceipt
+  - StockTransfer → Updates Lotes + Creates Consignacion
+  - DeliveryNote → Reduces Lotes + Creates Consumo
+
+**API Endpoints:**
+- `POST /api/reconciliation/external-documents/:id/validate` - Validate document
+- `POST /api/reconciliation/external-documents/:id/import` - Import document
+
+**Usage:**
+1. Go to `/reconciliation` dashboard
+2. Click "Importar" on any pending external document
+3. Review validation results and preview
+4. Click "Importar" to confirm
+
+**Documentation:** `docs/external-document-import.md`
+
+---
+
 ### Reconciliation SQLQueries Optimization (2026-01-14)
 **Status:** COMPLETE
 
