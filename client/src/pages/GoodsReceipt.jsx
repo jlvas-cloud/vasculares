@@ -288,7 +288,10 @@ export default function GoodsReceipt() {
   };
 
   const handleLinkPedido = async (pedido) => {
-    if (!receiptResult?.receiptId) return;
+    if (!receiptResult?.receiptId) {
+      console.error('handleLinkPedido called without receiptResult');
+      return;
+    }
 
     setLinkingPedido(true);
     try {
