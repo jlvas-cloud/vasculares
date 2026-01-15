@@ -401,7 +401,7 @@ async function pushToSapGoodsReceipt({ items, productMap, sapWarehouseCode, supp
   const sessionId = await sapService.ensureSession();
 
   // Build document lines with required TaxCode
-  const documentLines = items.map(item => {
+  const documentLines = items.map((item, index) => {
     // Handle both string and ObjectId productId
     const productId = item.productId?.toString ? item.productId.toString() : item.productId;
     const product = productMap[productId];
@@ -411,17 +411,20 @@ async function pushToSapGoodsReceipt({ items, productMap, sapWarehouseCode, supp
       throw new Error(`Product ${productId} not found in productMap or missing sapItemCode`);
     }
 
-    return {
+    const line = {
+      LineNum: index, // SAP requires line numbers starting from 0
       ItemCode: product.sapItemCode,
       Quantity: item.quantity,
       WarehouseCode: sapWarehouseCode,
       TaxCode: 'EXE', // Tax exempt - adjust if needed for your SAP config
       BatchNumbers: [{
+        ItemCode: product.sapItemCode, // SAP may require ItemCode in batch reference
         BatchNumber: item.lotNumber,
         Quantity: item.quantity,
         ExpiryDate: new Date(item.expiryDate).toISOString().split('T')[0]
       }]
     };
+    return line;
   });
 
   // Create PurchaseDeliveryNotes (Entrada de Mercancía) in SAP
@@ -453,7 +456,21 @@ async function pushToSapGoodsReceipt({ items, productMap, sapWarehouseCode, supp
 
   if (!response.ok) {
     const errorData = await response.json().catch(() => ({}));
-    throw new Error(errorData.error?.message?.value || `SAP error: ${response.statusText}`);
+    console.log('=== SAP ERROR RESPONSE ===');
+    console.log('Status:', response.status);
+    console.log('Full error:', JSON.stringify(errorData, null, 2));
+
+    // Translate cryptic SAP errors to user-friendly messages
+    let errorMessage = errorData.error?.message?.value || `SAP error: ${response.statusText}`;
+    const errorCode = errorData.error?.code;
+
+    // Error -5009 or "Item number is missing" usually means item doesn't exist in SAP
+    if (errorCode === -5009 || errorMessage.includes('Item number is missing')) {
+      const itemCodes = documentLines.map(l => l.ItemCode).join(', ');
+      errorMessage = `Uno o más productos no existen en SAP (códigos: ${itemCodes}). Verifique que los productos estén creados en SAP antes de registrar la recepción.`;
+    }
+
+    throw new Error(errorMessage);
   }
 
   const result = await response.json();

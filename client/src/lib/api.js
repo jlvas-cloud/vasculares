@@ -207,4 +207,19 @@ export const reconciliationApi = {
   setGoLiveDate: (date) => api.put('/reconciliation/config/go-live-date', { date }),
 };
 
+// Pedidos API (supplier order tracking)
+export const pedidosApi = {
+  // CRUD
+  getAll: (params) => api.get('/pedidos', { params }),
+  getById: (id) => api.get(`/pedidos/${id}`),
+  create: (data) => api.post('/pedidos', data),
+  update: (id, data) => api.put(`/pedidos/${id}`, data),
+  cancel: (id) => api.delete(`/pedidos/${id}`),
+  // Planning integration
+  getPendingByProduct: () => api.get('/pedidos/pending-by-product'),
+  // GoodsReceipt linking
+  suggestForItems: (productIds) => api.get('/pedidos/suggest-for-items', { params: { productIds: productIds.join(',') } }),
+  receiveItems: (id, data) => api.post(`/pedidos/${id}/receive`, data),
+};
+
 export default api;

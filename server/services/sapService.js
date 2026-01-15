@@ -495,6 +495,12 @@ function getServiceUrl() {
  *   }
  */
 async function validateBatchItem(batchNumber) {
+  // WHY THIS EXISTS: When receiving new goods, we validate batch numbers against SAP
+  // to catch data entry or OCR errors. If a batch already exists in SAP for a DIFFERENT
+  // product, we block the receipt and alert the user. This prevents accidentally
+  // assigning the same batch number to two different products.
+  // Example: SAP has batch "233" for product 419183. User tries to receive batch "233"
+  // for product 419165 (typo). Validation catches this mismatch.
   await ensureSession();
 
   try {
@@ -503,7 +509,13 @@ async function validateBatchItem(batchNumber) {
 
     const response = await sapRequest('GET', endpoint);
 
-    if (!response.value || response.value.length === 0) {
+    if (!response.ok) {
+      throw new Error(`SAP request failed: ${response.statusText}`);
+    }
+
+    const data = await response.json();
+
+    if (!data.value || data.value.length === 0) {
       // Batch doesn't exist in SAP - this is OK for new batches
       return {
         exists: false,
@@ -512,7 +524,7 @@ async function validateBatchItem(batchNumber) {
       };
     }
 
-    const batchDetails = response.value[0];
+    const batchDetails = data.value[0];
     return {
       exists: true,
       sapItemCode: batchDetails.ItemCode,

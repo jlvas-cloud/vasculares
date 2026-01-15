@@ -16,6 +16,7 @@ import GoodsReceipt from './pages/GoodsReceipt';
 import GoodsReceiptHistory from './pages/GoodsReceiptHistory';
 import ConsumptionHistory from './pages/ConsumptionHistory';
 import Reconciliation from './pages/Reconciliation';
+import Pedidos from './pages/Pedidos';
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -62,6 +63,7 @@ function App() {
                         <Route path="/goods-receipt" element={<GoodsReceipt />} />
                         <Route path="/goods-receipt-history" element={<GoodsReceiptHistory />} />
                         <Route path="/reconciliation" element={<Reconciliation />} />
+                        <Route path="/pedidos" element={<Pedidos />} />
                       </Routes>
                     </Layout>
                   </PrivateRoute>

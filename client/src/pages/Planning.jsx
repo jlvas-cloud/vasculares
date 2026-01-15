@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient, keepPreviousData } from '@tanstack/react-query';
-import { analyticsApi, locacionesApi, productosApi, inventarioObjetivosApi, consignacionesApi, inventarioApi } from '../lib/api';
+import { analyticsApi, locacionesApi, productosApi, inventarioObjetivosApi, consignacionesApi, inventarioApi, pedidosApi } from '../lib/api';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../components/ui/card';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '../components/ui/dialog';
@@ -9,7 +9,7 @@ import { Input } from '../components/ui/input';
 import { Button } from '../components/ui/button';
 import { Badge } from '../components/ui/badge';
 import { useToast } from '../components/ui/toast';
-import { BarChart3, TrendingUp, AlertTriangle, CheckCircle2, Edit, Warehouse, Truck, Loader2, Check, Package, ChevronDown, ChevronRight, XCircle } from 'lucide-react';
+import { BarChart3, TrendingUp, AlertTriangle, CheckCircle2, Edit, Warehouse, Truck, Loader2, Check, Package, ChevronDown, ChevronRight, XCircle, ShoppingCart } from 'lucide-react';
 
 export default function Planning() {
   const [category, setCategory] = useState('all');
@@ -25,6 +25,9 @@ export default function Planning() {
   const [stockMismatchOpen, setStockMismatchOpen] = useState(false);
   const [stockMismatches, setStockMismatches] = useState([]);
   const [validatingSap, setValidatingSap] = useState(false);
+  // Order dialog state (bulk orders)
+  const [orderOpen, setOrderOpen] = useState(false);
+  const [orderItems, setOrderItems] = useState([]);
   const queryClient = useQueryClient();
   const toast = useToast();
 
@@ -102,9 +105,60 @@ export default function Planning() {
     },
   });
 
+  // Mutation for creating supplier orders (bulk)
+  const createOrderMutation = useMutation({
+    mutationFn: pedidosApi.create,
+    onSuccess: () => {
+      queryClient.invalidateQueries(['planning-data']);
+      setOrderOpen(false);
+      setOrderItems([]);
+      toast.success('Pedido creado exitosamente');
+    },
+    onError: (error) => {
+      console.error('Order error:', error);
+      const message = error?.response?.data?.error || error?.message || 'Error al crear pedido';
+      toast.error(message);
+    },
+  });
+
   const handleEdit = (product) => {
     setEditingProduct(product);
     setEditOpen(true);
+  };
+
+  const handleOpenOrderDialog = () => {
+    // Prepare order items from planning data (products with suggestedOrder > 0)
+    const items = (planningData || [])
+      .filter(p => p.suggestedOrder > 0)
+      .map(p => ({
+        productId: p.productId,
+        productName: p.name,
+        productCode: p.code,
+        size: p.size,
+        suggestedOrder: p.suggestedOrder,
+        warehouseStock: p.warehouseStock,
+        pendingOrders: p.pendingOrders || 0,
+        quantityToOrder: p.suggestedOrder,
+        included: true,
+      }));
+    setOrderItems(items);
+    setOrderOpen(true);
+  };
+
+  const handleCreateOrder = () => {
+    const itemsToOrder = orderItems
+      .filter(item => item.included && item.quantityToOrder > 0)
+      .map(item => ({
+        productId: item.productId,
+        quantityOrdered: item.quantityToOrder,
+      }));
+
+    if (itemsToOrder.length === 0) {
+      toast.warning('Selecciona al menos un producto para ordenar');
+      return;
+    }
+
+    createOrderMutation.mutate({ items: itemsToOrder });
   };
 
   // Load lots for warehouse when opening consignment dialog
@@ -410,6 +464,12 @@ export default function Planning() {
         <CardHeader>
           <div className="flex items-center justify-between">
             <CardTitle>Filtros</CardTitle>
+            {isWarehouseView && (
+              <Button onClick={handleOpenOrderDialog} className="bg-purple-600 hover:bg-purple-700">
+                <ShoppingCart className="mr-2 h-4 w-4" />
+                Crear Pedido
+              </Button>
+            )}
             {isCentroView && (
               <Button onClick={async () => {
                 // Find warehouse location first
@@ -523,7 +583,8 @@ export default function Planning() {
                   {isWarehouseView ? (
                     <>
                       <th className="text-right p-2 font-medium">Stock Almacén</th>
-                      <th className="text-right p-2 font-medium">En Tránsito</th>
+                      <th className="text-right p-2 font-medium">Pedido</th>
+                      <th className="text-right p-2 font-medium">Consig. Out</th>
                       <th className="text-right p-2 font-medium">En Centros</th>
                       <th className="text-right p-2 font-medium">Total</th>
                     </>
@@ -583,6 +644,15 @@ export default function Planning() {
                               >
                                 {currentStock}
                               </span>
+                            </td>
+                            <td className="p-2 text-right">
+                              {product.pendingOrders > 0 ? (
+                                <span className="text-purple-600 font-medium">
+                                  {product.pendingOrders}
+                                </span>
+                              ) : (
+                                <span className="text-muted-foreground">-</span>
+                              )}
                             </td>
                             <td className="p-2 text-right">
                               {product.warehouseInTransit > 0 ? (
@@ -691,6 +761,7 @@ export default function Planning() {
                             variant="ghost"
                             size="sm"
                             onClick={() => handleEdit(product)}
+                            title="Editar objetivo"
                           >
                             <Edit className="h-4 w-4" />
                           </Button>
@@ -1082,6 +1153,135 @@ export default function Planning() {
           <DialogFooter>
             <Button onClick={() => setStockMismatchOpen(false)}>
               Entendido, Ajustar Cantidades
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Order Dialog (Pedidos - Bulk) */}
+      <Dialog open={orderOpen} onOpenChange={setOrderOpen}>
+        <DialogContent className="max-w-4xl max-h-[80vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <ShoppingCart className="h-5 w-5 text-purple-600" />
+              Crear Pedido al Proveedor
+            </DialogTitle>
+            <DialogDescription>
+              Selecciona los productos a ordenar. Este pedido es interno (no se sincroniza con SAP).
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            {orderItems.length === 0 ? (
+              <div className="text-center py-8 text-muted-foreground">
+                No hay productos con necesidad de pedido (Sugerido Ordenar = 0 para todos)
+              </div>
+            ) : (
+              <div className="border rounded-md">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b bg-muted/50">
+                      <th className="text-left p-2 w-12"></th>
+                      <th className="text-left p-2">Producto</th>
+                      <th className="text-left p-2">Tamaño</th>
+                      <th className="text-right p-2">Sugerido</th>
+                      <th className="text-right p-2">Stock Actual</th>
+                      <th className="text-right p-2">Pedidos Pend.</th>
+                      <th className="text-right p-2">A Ordenar</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {orderItems.map((item, index) => (
+                      <tr key={item.productId} className="border-b hover:bg-muted/30">
+                        <td className="p-2">
+                          <input
+                            type="checkbox"
+                            checked={item.included}
+                            onChange={(e) => {
+                              const newItems = [...orderItems];
+                              newItems[index].included = e.target.checked;
+                              setOrderItems(newItems);
+                            }}
+                            className="h-4 w-4"
+                          />
+                        </td>
+                        <td className="p-2">
+                          <div>
+                            <div className="font-medium">{item.productName}</div>
+                            <div className="text-xs text-muted-foreground">
+                              Código: {item.productCode}
+                            </div>
+                          </div>
+                        </td>
+                        <td className="p-2">{item.size}</td>
+                        <td className="p-2 text-right text-blue-600 font-medium">
+                          {item.suggestedOrder}
+                        </td>
+                        <td className="p-2 text-right">
+                          {item.warehouseStock}
+                        </td>
+                        <td className="p-2 text-right">
+                          {item.pendingOrders > 0 ? (
+                            <span className="text-purple-600">{item.pendingOrders}</span>
+                          ) : (
+                            <span className="text-muted-foreground">-</span>
+                          )}
+                        </td>
+                        <td className="p-2">
+                          <Input
+                            type="number"
+                            min="0"
+                            value={item.quantityToOrder}
+                            onChange={(e) => {
+                              const newItems = [...orderItems];
+                              newItems[index].quantityToOrder = Math.max(0, parseInt(e.target.value) || 0);
+                              setOrderItems(newItems);
+                            }}
+                            className="w-20 text-right"
+                          />
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+            <div className="bg-purple-50 border border-purple-200 p-3 rounded-md">
+              <div className="flex justify-between text-sm font-medium">
+                <span>Total de productos seleccionados:</span>
+                <span>
+                  {orderItems.filter(item => item.included && item.quantityToOrder > 0).length}
+                </span>
+              </div>
+              <div className="flex justify-between text-sm font-medium">
+                <span>Total unidades a ordenar:</span>
+                <span className="text-purple-600">
+                  {orderItems
+                    .filter(item => item.included)
+                    .reduce((sum, item) => sum + (item.quantityToOrder || 0), 0)}
+                </span>
+              </div>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setOrderOpen(false)}
+              disabled={createOrderMutation.isPending}
+            >
+              Cancelar
+            </Button>
+            <Button
+              onClick={handleCreateOrder}
+              disabled={
+                createOrderMutation.isPending ||
+                orderItems.filter(item => item.included && item.quantityToOrder > 0).length === 0
+              }
+              className="bg-purple-600 hover:bg-purple-700"
+            >
+              {createOrderMutation.isPending && (
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+              )}
+              {createOrderMutation.isPending ? 'Creando...' : 'Crear Pedido'}
             </Button>
           </DialogFooter>
         </DialogContent>
