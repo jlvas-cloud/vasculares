@@ -313,9 +313,9 @@ Allows importing external SAP documents (detected by reconciliation) into the lo
 
 ---
 
-## IN PROGRESS: Supplier Order Tracking (Pedidos)
+## COMPLETED: Supplier Order Tracking (Pedidos)
 
-**Status:** Planning complete, ready for implementation (2026-01-14)
+**Status:** ✅ All phases complete (2026-01-15)
 
 **Goal:** Track orders placed to supplier before they arrive as GoodsReceipts.
 
@@ -375,12 +375,12 @@ Pedido {
 
 | Phase | Description | Status |
 |-------|-------------|--------|
-| 1.1 | Pedido model + API (CRUD + getPendingByProduct) | TODO |
-| 1.2 | Fix suggestedOrder formula in analytics.js | TODO |
-| 1.3 | GoodsReceipt → Pedido linking (hybrid: auto-suggest, user confirms) | TODO |
-| 2.1 | Planning page: Pedido column + "Ordenar" button | TODO |
-| 3.1 | `/pedidos` page: Order history + management | TODO |
-| 4.1 | GoodsReceipt UI: Pedido linking dialog | TODO |
+| 1.1 | Pedido model + API (CRUD + getPendingByProduct) | ✅ DONE |
+| 1.2 | Fix suggestedOrder formula in analytics.js | ✅ DONE (already implemented) |
+| 1.3 | GoodsReceipt → Pedido linking (hybrid: auto-suggest, user confirms) | ✅ DONE |
+| 2.1 | Planning page: Pedido column + "Ordenar" button | ✅ DONE |
+| 3.1 | `/pedidos` page: Order history + management | ✅ DONE |
+| 4.1 | GoodsReceipt UI: Pedido linking dialog | ✅ DONE |
 
 ### Design Decisions
 

@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
-import { goodsReceiptApi } from '../lib/api';
+import { goodsReceiptApi, pedidosApi } from '../lib/api';
 import { Button } from '../components/ui/button';
 import { Input } from '../components/ui/input';
 import { Label } from '../components/ui/label';
@@ -9,8 +9,9 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../co
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select';
 import { Badge } from '../components/ui/badge';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '../components/ui/dialog';
-import { Package, Plus, Trash2, Loader2, CheckCircle2, AlertCircle, Search, FileUp, Edit3, ShieldAlert } from 'lucide-react';
+import { Package, Plus, Trash2, Loader2, CheckCircle2, AlertCircle, Search, FileUp, Edit3, ShieldAlert, ShoppingCart, Link2 } from 'lucide-react';
 import { useToast } from '../components/ui/toast';
+import { formatDate } from '../lib/utils';
 import FileUploader from '../components/FileUploader';
 
 export default function GoodsReceipt() {
@@ -47,6 +48,11 @@ export default function GoodsReceipt() {
   const [mismatchDialogOpen, setMismatchDialogOpen] = useState(false);
   const [validatingBatches, setValidatingBatches] = useState(false);
 
+  // Pedido linking state
+  const [pedidoLinkingOpen, setPedidoLinkingOpen] = useState(false);
+  const [suggestedPedidos, setSuggestedPedidos] = useState([]);
+  const [linkingPedido, setLinkingPedido] = useState(false);
+
   const queryClient = useQueryClient();
   const navigate = useNavigate();
   const toast = useToast();
@@ -79,12 +85,28 @@ export default function GoodsReceipt() {
   // Create mutation
   const createMutation = useMutation({
     mutationFn: (data) => goodsReceiptApi.create(data),
-    onSuccess: (response) => {
+    onSuccess: async (response) => {
       queryClient.invalidateQueries(['inventario']);
       queryClient.invalidateQueries(['lotes']);
       queryClient.invalidateQueries(['dashboard-stats']);
       setReceiptResult(response.data);
       setResultDialogOpen(true);
+
+      // Check for matching pedidos
+      try {
+        // Get productIds from lotes (response includes lotes, not items)
+        const productIds = response.data.lotes?.map(lote => lote.productId?.toString() || lote.productId).filter(Boolean);
+        const uniqueProductIds = [...new Set(productIds)];
+        if (uniqueProductIds?.length > 0) {
+          const pedidosRes = await pedidosApi.suggestForItems(uniqueProductIds);
+          if (pedidosRes.data?.length > 0) {
+            setSuggestedPedidos(pedidosRes.data);
+          }
+        }
+      } catch (err) {
+        // Silent fail - pedido linking is optional
+        console.log('Could not fetch suggested pedidos:', err);
+      }
     },
     onError: (error) => {
       toast.error(error.response?.data?.error || 'Error al crear recepcion');
@@ -251,7 +273,78 @@ export default function GoodsReceipt() {
 
   const handleCloseResult = () => {
     setResultDialogOpen(false);
+    // If there are suggested pedidos, show linking dialog instead of navigating
+    if (suggestedPedidos.length > 0) {
+      setPedidoLinkingOpen(true);
+    } else {
+      navigate('/inventory');
+    }
+  };
+
+  const handleSkipPedidoLinking = () => {
+    setPedidoLinkingOpen(false);
+    setSuggestedPedidos([]);
     navigate('/inventory');
+  };
+
+  const handleLinkPedido = async (pedido) => {
+    if (!receiptResult?.receiptId) return;
+
+    setLinkingPedido(true);
+    try {
+      // Build items to receive based on what matches between receipt lotes and pedido
+      // Group receipt lotes by productId and sum quantities
+      const receiptByProduct = {};
+      (receiptResult.lotes || []).forEach(lote => {
+        const productId = lote.productId?.toString() || lote.productId;
+        if (!receiptByProduct[productId]) {
+          receiptByProduct[productId] = 0;
+        }
+        receiptByProduct[productId] += lote.quantityTotal || lote.quantityAvailable || 0;
+      });
+
+      const itemsToReceive = pedido.items
+        .filter(item => receiptByProduct[item.productId.toString()])
+        .map(item => {
+          const productId = item.productId.toString();
+          const receiptQty = receiptByProduct[productId] || 0;
+          const pendingQty = item.quantityOrdered - item.quantityReceived;
+          // Receive the minimum of: pending quantity or received quantity
+          const qtyToReceive = Math.min(pendingQty, receiptQty);
+          return {
+            productId: item.productId,
+            quantityReceived: qtyToReceive,
+          };
+        })
+        .filter(item => item.quantityReceived > 0);
+
+      if (itemsToReceive.length === 0) {
+        toast.warning('No hay productos coincidentes para vincular');
+        setLinkingPedido(false);
+        return;
+      }
+
+      await pedidosApi.receiveItems(pedido._id, {
+        items: itemsToReceive,
+        goodsReceiptId: receiptResult.receiptId,
+      });
+
+      toast.success('Pedido actualizado exitosamente');
+      queryClient.invalidateQueries(['pedidos']);
+
+      // Remove this pedido from suggestions
+      setSuggestedPedidos(prev => prev.filter(p => p._id !== pedido._id));
+
+      // If no more suggestions, close and navigate
+      if (suggestedPedidos.length <= 1) {
+        setPedidoLinkingOpen(false);
+        navigate('/inventory');
+      }
+    } catch (error) {
+      toast.error(error.response?.data?.error || 'Error al vincular pedido');
+    } finally {
+      setLinkingPedido(false);
+    }
   };
 
   const currentItems = activeTab === 'packing' ? extractedItems : items;
@@ -796,9 +889,30 @@ export default function GoodsReceipt() {
             </div>
           )}
 
+          {suggestedPedidos.length > 0 && (
+            <div className="bg-purple-50 border border-purple-200 rounded-lg p-3 flex items-center gap-3">
+              <ShoppingCart className="h-5 w-5 text-purple-600 flex-shrink-0" />
+              <div className="text-sm">
+                <span className="font-medium text-purple-800">
+                  {suggestedPedidos.length} pedido{suggestedPedidos.length !== 1 ? 's' : ''} pendiente{suggestedPedidos.length !== 1 ? 's' : ''}
+                </span>
+                <span className="text-purple-700">
+                  {' '}con productos de esta recepcion
+                </span>
+              </div>
+            </div>
+          )}
+
           <DialogFooter>
             <Button onClick={handleCloseResult}>
-              Ver Inventario
+              {suggestedPedidos.length > 0 ? (
+                <>
+                  <Link2 className="h-4 w-4 mr-2" />
+                  Vincular Pedidos
+                </>
+              ) : (
+                'Ver Inventario'
+              )}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -866,6 +980,98 @@ export default function GoodsReceipt() {
               onClick={() => setMismatchDialogOpen(false)}
             >
               Cerrar y Corregir
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Pedido Linking Dialog */}
+      <Dialog open={pedidoLinkingOpen} onOpenChange={(open) => {
+        if (!open) {
+          // User dismissed dialog - navigate to inventory
+          handleSkipPedidoLinking();
+        }
+      }}>
+        <DialogContent className="max-w-2xl max-h-[80vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Link2 className="h-5 w-5 text-purple-600" />
+              Vincular a Pedido
+            </DialogTitle>
+            <DialogDescription>
+              Se encontraron pedidos pendientes con productos de esta recepcion.
+              Selecciona cual actualizar.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-4">
+            {suggestedPedidos.map((pedido) => {
+              const totalPending = pedido.items.reduce(
+                (sum, item) => sum + (item.quantityOrdered - item.quantityReceived),
+                0
+              );
+              return (
+                <div
+                  key={pedido._id}
+                  className="border rounded-lg p-4 hover:bg-muted/50 transition-colors"
+                >
+                  <div className="flex items-start justify-between">
+                    <div className="space-y-2">
+                      <div className="flex items-center gap-2">
+                        <ShoppingCart className="h-4 w-4 text-purple-600" />
+                        <span className="font-medium">
+                          Pedido del {formatDate(pedido.orderDate)}
+                        </span>
+                        <Badge className="bg-yellow-100 text-yellow-800 border-0">
+                          {totalPending} pendientes
+                        </Badge>
+                      </div>
+                      <div className="text-sm text-muted-foreground">
+                        {pedido.items.length} producto{pedido.items.length !== 1 ? 's' : ''} coincidentes
+                      </div>
+                      <div className="mt-2 space-y-1">
+                        {pedido.items.slice(0, 3).map((item, idx) => (
+                          <div key={idx} className="text-sm flex items-center gap-2">
+                            <span className="text-muted-foreground">•</span>
+                            <span>
+                              {item.quantityOrdered - item.quantityReceived} x Producto {item.productId.toString().slice(-6)}
+                            </span>
+                          </div>
+                        ))}
+                        {pedido.items.length > 3 && (
+                          <div className="text-sm text-muted-foreground">
+                            ... y {pedido.items.length - 3} mas
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                    <Button
+                      onClick={() => handleLinkPedido(pedido)}
+                      disabled={linkingPedido}
+                      className="bg-purple-600 hover:bg-purple-700"
+                    >
+                      {linkingPedido ? (
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                      ) : (
+                        <>
+                          <Link2 className="h-4 w-4 mr-1" />
+                          Vincular
+                        </>
+                      )}
+                    </Button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={handleSkipPedidoLinking}
+              disabled={linkingPedido}
+            >
+              Omitir
             </Button>
           </DialogFooter>
         </DialogContent>
