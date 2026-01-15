@@ -313,17 +313,101 @@ Allows importing external SAP documents (detected by reconciliation) into the lo
 
 ---
 
+## IN PROGRESS: Supplier Order Tracking (Pedidos)
+
+**Status:** Planning complete, ready for implementation (2026-01-14)
+
+**Goal:** Track orders placed to supplier before they arrive as GoodsReceipts.
+
+### Problem Statement
+
+Currently, the "Sugerido Ordenar" column in Planning shows what to order, but:
+1. No way to record that an order was placed
+2. No visibility of "in transit" from supplier
+3. Formula bug: assumes centro stock is fungible (can transfer between centros)
+
+### Solution
+
+**New Pedido (Order) model** to track supplier orders internally (not SAP).
+
+**Transit tracking per location:**
+| Location | Tránsito Entrante | Tránsito Saliente |
+|----------|-------------------|-------------------|
+| Almacén Principal | Pedidos (from supplier) | Consignaciones EN_TRANSITO |
+| Centros | Consignaciones EN_TRANSITO | N/A |
+
+### Formula Fix (Bug)
+
+**Current (wrong):**
+```javascript
+suggestedOrder = (warehouseTarget + totalCentroTargets) - (warehouseStock + totalCentroStock)
+// Assumes centro stock can move between centros
+```
+
+**Correct:**
+```javascript
+totalCentroDeficit = sum of max(0, centroTarget - centroStock) per centro
+suggestedOrder = max(0, totalCentroDeficit + warehouseTarget - warehouseStock - pendingOrders)
+```
+
+**Why:** Centro stock is not fungible. CDC surplus cannot help CECANOR deficit.
+
+### Data Model
+
+```javascript
+Pedido {
+  orderDate: Date,
+  expectedArrivalDate: Date,          // Optional
+  supplier: String,                   // Optional
+  notes: String,
+  status: 'PENDIENTE' | 'PARCIAL' | 'COMPLETO' | 'CANCELADO',
+  items: [{
+    productId: ObjectId,
+    quantityOrdered: Number,
+    quantityReceived: Number,         // Updated on GoodsReceipt
+  }],
+  createdBy: ObjectId,
+  companyId: ObjectId,
+}
+```
+
+### Implementation Phases
+
+| Phase | Description | Status |
+|-------|-------------|--------|
+| 1.1 | Pedido model + API (CRUD + getPendingByProduct) | TODO |
+| 1.2 | Fix suggestedOrder formula in analytics.js | TODO |
+| 1.3 | GoodsReceipt → Pedido linking (hybrid: auto-suggest, user confirms) | TODO |
+| 2.1 | Planning page: Pedido column + "Ordenar" button | TODO |
+| 3.1 | `/pedidos` page: Order history + management | TODO |
+| 4.1 | GoodsReceipt UI: Pedido linking dialog | TODO |
+
+### Design Decisions
+
+1. **GoodsReceipt linking:** Hybrid (auto-suggest matches, user confirms)
+2. **Partial receipts:** Keep Pedido as PARCIAL until fully received
+3. **UI:** Both Planning integration AND separate `/pedidos` page
+
+**Design Doc:** `docs/pedidos-design.md`
+
+---
+
 ## NEXT STEPS
+
+### Current Priority: Pedidos Feature
+1. Fix suggestedOrder formula (standalone bugfix)
+2. Implement Pedido model + API
+3. Planning page integration
+4. Pedidos history page
+5. GoodsReceipt linking
 
 ### Testing Phase
 1. ✅ Reset script created and tested
 2. ✅ SAP Reconciliation System implemented
 3. ✅ Moving date window implemented (goLiveDate + incremental checks)
 4. ✅ External document import implemented
-5. Test SAP inventory sync with real data
-6. Test reconciliation dashboard at `/reconciliation`
-7. Start app and verify UI shows correct inventory
-8. Test end-to-end workflows (consignment, consumption)
+5. ✅ External document import tested successfully
+6. Test end-to-end workflows (consignment, consumption)
 
 ### Before Production
 1. Clear test data with `reset-inventory-data.js --confirm`
@@ -347,6 +431,7 @@ Allows importing external SAP documents (detected by reconciliation) into the lo
 | `Consignacion` | Warehouse→Centro transfers | Creates StockTransfers in SAP |
 | `Consumo` | Consumption records | Creates DeliveryNotes in SAP |
 | `GoodsReceipt` | Incoming stock | Creates PurchaseDeliveryNotes in SAP |
+| `Pedido` | Supplier order tracking | **Not synced** - internal tracking only |
 | `Transaccion` | Movement audit log | Not synced to SAP |
 
 ### Reconciliation Models
