@@ -420,13 +420,14 @@ exports.getConsumptionBySize = async (req, res, next) => {
  */
 exports.getPlanningData = async (req, res, next) => {
   try {
-    const { getInventarioObjetivosModel } = require('../getModel');
+    const { getInventarioObjetivosModel, getPedidosModel } = require('../getModel');
 
     const Locaciones = await getLocacionesModel(req.companyId);
     const Productos = await getProductosModel(req.companyId);
     const Inventario = await getInventarioModel(req.companyId);
     const Transacciones = await getTransaccionesModel(req.companyId);
     const InventarioObjetivos = await getInventarioObjetivosModel(req.companyId);
+    const Pedidos = await getPedidosModel(req.companyId);
 
     const { category, locationId } = req.query;
     const isLocationView = !!locationId;
@@ -695,6 +696,26 @@ exports.getPlanningData = async (req, res, next) => {
         .lean();
     }
 
+    // Get pending orders per product (for warehouse view)
+    // Aggregates quantities from PENDIENTE and PARCIAL pedidos
+    let pendingOrdersByProduct = {};
+    if (!isLocationView) {
+      const pendingPedidos = await Pedidos.find({
+        companyId: req.companyId,
+        status: { $in: ['PENDIENTE', 'PARCIAL'] },
+      }).lean();
+
+      for (const pedido of pendingPedidos) {
+        for (const item of pedido.items) {
+          const pending = Math.max(0, item.quantityOrdered - item.quantityReceived);
+          if (pending > 0) {
+            const productId = item.productId.toString();
+            pendingOrdersByProduct[productId] = (pendingOrdersByProduct[productId] || 0) + pending;
+          }
+        }
+      }
+    }
+
     // Create maps for easy lookup
     const stockMap = {};
     stockLevels.forEach((item) => {
@@ -783,23 +804,30 @@ exports.getPlanningData = async (req, res, next) => {
 
         const centroStocksMap = centroStocksByLocation[product._id.toString()] || {};
 
-        // Calculate system-wide totals
+        // Calculate centro deficits individually (stock is NOT fungible between centros)
+        // A surplus at CDC cannot help a deficit at CECANOR
+        let totalCentroDeficit = 0;
         let totalCentroTargets = 0;
-        let totalCentroStock = 0;
 
         centroTargetsForProduct.forEach((target) => {
-          totalCentroTargets += target.targetStock || 0;
+          const centroTarget = target.targetStock || 0;
           const locId = target.locationId._id.toString();
-          totalCentroStock += centroStocksMap[locId] || 0;
+          const centroStock = centroStocksMap[locId] || 0;
+          totalCentroTargets += centroTarget;
+          // Only count deficits, not surpluses (surplus can't help other centros)
+          totalCentroDeficit += Math.max(0, centroTarget - centroStock);
         });
 
-        // Option 1: System-wide approach
-        // Total Target = Warehouse Target + All Centro Targets
-        // Total Stock = Warehouse Stock + All Centro Stocks
-        // Suggested Order = Total Target - Total Stock
-        const systemTarget = warehouseTarget + totalCentroTargets;
-        const systemStock = stock.warehouseStock + totalCentroStock;
-        const suggestedOrder = Math.max(0, systemTarget - systemStock);
+        // Get pending orders for this product
+        const pendingOrders = pendingOrdersByProduct[product._id.toString()] || 0;
+
+        // Correct formula:
+        // suggestedOrder = centroDeficits + warehouseTarget - warehouseStock - pendingOrders
+        // This avoids double-counting because warehouse stock can cover either
+        // its own target OR centro deficits (it's the flexible pool)
+        const suggestedOrder = Math.max(0,
+          totalCentroDeficit + warehouseTarget - stock.warehouseStock - pendingOrders
+        );
 
         // Calculate coverage days based on warehouse stock only
         const daysOfCoverage =
@@ -810,11 +838,12 @@ exports.getPlanningData = async (req, res, next) => {
         result = {
           ...result,
           warehouseStock: stock.warehouseStock,
-          warehouseInTransit, // Stock sent from warehouse, awaiting confirmation
+          warehouseInTransit, // Stock sent from warehouse, awaiting confirmation (consignaciones)
+          pendingOrders, // Orders to supplier not yet received
           consignedStock: stock.consignedStock,
           totalStock: stock.totalStock,
           targetStock: warehouseTarget, // Show warehouse target in column
-          systemTarget, // Total system target (for debugging/future use)
+          totalCentroDeficit, // Centro needs (for debugging/display)
           suggestedOrder,
           daysOfCoverage,
           status: calculateStatus(stock.warehouseStock, warehouseTarget),

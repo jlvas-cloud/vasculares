@@ -15,6 +15,7 @@ const consumoSchema = require('./models/consumoModel');
 const externalSapDocumentSchema = require('./models/externalSapDocumentModel');
 const reconciliationRunSchema = require('./models/reconciliationRunModel');
 const vascularesConfigSchema = require('./models/vascularesConfigModel');
+const pedidoSchema = require('./models/pedidoModel');
 const usersSchema = require('./models/usersModel');
 const companySchema = require('./models/companyModel');
 
@@ -181,6 +182,16 @@ exports.getReconciliationRunsModel = async (companyId) => {
 exports.getVascularesConfigModel = async (companyId) => {
   const db = await getVascularesDb(companyId, 'vascularesconfig', vascularesConfigSchema);
   return db.model('vascularesconfig');
+};
+
+/**
+ * Get Pedidos model for a specific company
+ * Stored in: {companyId}_vasculares database
+ * Tracks supplier orders (internal tracking, not synced to SAP)
+ */
+exports.getPedidosModel = async (companyId) => {
+  const db = await getVascularesDb(companyId, 'pedidos', pedidoSchema);
+  return db.model('pedidos');
 };
 
 // ============================================
