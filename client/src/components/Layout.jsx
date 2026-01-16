@@ -1,10 +1,10 @@
 import { Link, useLocation } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { Button } from './ui/button';
-import { Package, MapPin, LogOut, Home, Boxes, History, BarChart3, Truck, PackagePlus, FileBox, Activity, ClipboardList, RefreshCw, ShoppingCart } from 'lucide-react';
+import { Package, MapPin, LogOut, Home, Boxes, History, BarChart3, Truck, PackagePlus, FileBox, Activity, ClipboardList, RefreshCw, ShoppingCart, Settings, Users } from 'lucide-react';
 
 export default function Layout({ children }) {
-  const { user, company, logout } = useAuth();
+  const { user, company, profile, logout, hasPermission } = useAuth();
   const location = useLocation();
 
   const navigation = [
@@ -31,6 +31,10 @@ export default function Layout({ children }) {
 
     { type: 'header', name: 'Admin' },
     { name: 'Reconciliación SAP', href: '/reconciliation', icon: RefreshCw },
+    { name: 'Usuarios', href: '/users', icon: Users, permission: 'manageUsers' },
+
+    { type: 'divider' },
+    { name: 'Configuración', href: '/settings', icon: Settings },
   ];
 
   return (
@@ -44,6 +48,11 @@ export default function Layout({ children }) {
         <div className="flex-1 overflow-y-auto px-3 py-4">
           <nav className="space-y-1">
             {navigation.map((item, index) => {
+              // Skip items that require a permission the user doesn't have
+              if (item.permission && !hasPermission(item.permission)) {
+                return null;
+              }
+
               if (item.type === 'header') {
                 return (
                   <div key={item.name} className="pt-4 pb-1 px-3">
@@ -82,7 +91,9 @@ export default function Layout({ children }) {
         <div className="border-t p-4">
           <div className="mb-2 text-sm">
             <div className="font-medium">{user?.firstname} {user?.lastname}</div>
-            <div className="text-muted-foreground">{company?.name}</div>
+            <div className="text-muted-foreground text-xs">{profile?.role && (
+              <span className="capitalize">{profile.role === 'almacen' ? 'Almacén' : profile.role}</span>
+            )} • {company?.name}</div>
           </div>
           <Button variant="outline" size="sm" onClick={logout} className="w-full">
             <LogOut className="mr-2 h-4 w-4" />

@@ -16,6 +16,7 @@ const externalSapDocumentSchema = require('./models/externalSapDocumentModel');
 const reconciliationRunSchema = require('./models/reconciliationRunModel');
 const vascularesConfigSchema = require('./models/vascularesConfigModel');
 const pedidoSchema = require('./models/pedidoModel');
+const userProfileSchema = require('./models/userProfileModel');
 const usersSchema = require('./models/usersModel');
 const companySchema = require('./models/companyModel');
 
@@ -233,6 +234,16 @@ exports.getLocalUsersModel = async (companyId) => {
     console.error('Could not get local users:', error);
     throw error;
   }
+};
+
+/**
+ * Get UserProfiles model for a specific company
+ * Stored in: {companyId}_vasculares database
+ * Contains app-specific user data: roles, SAP credentials
+ */
+exports.getUserProfilesModel = async (companyId) => {
+  const db = await getVascularesDb(companyId, 'user_profiles', userProfileSchema);
+  return db.model('user_profiles');
 };
 
 // Export database helpers for advanced use cases

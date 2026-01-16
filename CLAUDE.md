@@ -169,6 +169,9 @@ DEBUG_SAP=false
 RECONCILIATION_CRON=0 2 * * *        # Default: 2 AM daily
 ENABLE_CRON_JOBS=true                # Set to false to disable nightly job
 # Note: goLiveDate is set automatically by sync-inventory-from-sap.js
+
+# Per-user SAP credentials encryption (required for user management)
+SAP_CREDENTIALS_KEY=<64-hex-chars>   # Generate with: node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
 ```
 
 ## Documentation

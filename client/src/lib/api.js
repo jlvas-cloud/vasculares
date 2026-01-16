@@ -222,4 +222,21 @@ export const pedidosApi = {
   receiveItems: (id, data) => api.post(`/pedidos/${id}/receive`, data),
 };
 
+// User Profiles API (roles, SAP credentials)
+export const userProfilesApi = {
+  // Current user
+  getMyProfile: () => api.get('/user-profiles/me'),
+  saveSapCredentials: (username, password) => api.put('/user-profiles/sap-credentials', { username, password }),
+  testSapCredentials: () => api.post('/user-profiles/sap-credentials/test'),
+  deleteSapCredentials: () => api.delete('/user-profiles/sap-credentials'),
+  // Info
+  getRoles: () => api.get('/user-profiles/roles'),
+  // Admin
+  getAllProfiles: () => api.get('/user-profiles'),
+  getAvailableUsers: () => api.get('/user-profiles/available-users'),
+  createProfile: (userId, role) => api.post('/user-profiles', { userId, role }),
+  updateRole: (id, role) => api.put(`/user-profiles/${id}/role`, { role }),
+  updateStatus: (id, isActive) => api.put(`/user-profiles/${id}/status`, { isActive }),
+};
+
 export default api;

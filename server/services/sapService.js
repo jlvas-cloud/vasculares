@@ -200,6 +200,125 @@ async function ensureSession() {
   return sessionId;
 }
 
+// ============================================
+// PER-USER SESSION MANAGEMENT
+// ============================================
+
+// Cache of user sessions: { [userId]: { sessionId, expiry, username } }
+const userSessions = new Map();
+
+/**
+ * Test user credentials by attempting SAP login
+ * Used to verify credentials before saving them
+ * @param {string} username - SAP username
+ * @param {string} password - SAP password
+ * @returns {Promise<{success: boolean, sessionId?: string}>}
+ */
+async function testUserCredentials(username, password) {
+  try {
+    const response = await sapRequest('POST', '/Login', {
+      CompanyDB: SAP_CONFIG.companyDB,
+      UserName: username,
+      Password: password,
+    }, false);
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(`SAP Login failed: ${response.status} - ${errorText}`);
+    }
+
+    const data = await response.json();
+
+    if (!data.SessionId) {
+      throw new Error('SAP Login response missing SessionId');
+    }
+
+    // Immediately logout this test session (we don't need to keep it)
+    try {
+      await fetch(`${SAP_CONFIG.serviceUrl}/Logout`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Cookie': `B1SESSION=${data.SessionId}`
+        }
+      });
+    } catch (logoutErr) {
+      // Ignore logout errors for test session
+    }
+
+    return { success: true, sessionId: data.SessionId };
+  } catch (error) {
+    console.error('User credential test failed:', error.message);
+    throw error;
+  }
+}
+
+/**
+ * Login with specific user credentials and cache the session
+ * @param {string} userId - User ID for session cache
+ * @param {string} username - SAP username
+ * @param {string} password - SAP password
+ * @returns {Promise<string>} Session ID
+ */
+async function loginAsUser(userId, username, password) {
+  // Check if we have a valid cached session
+  const cached = userSessions.get(userId);
+  if (cached && cached.expiry > Date.now()) {
+    return cached.sessionId;
+  }
+
+  // Create new session
+  const response = await sapRequest('POST', '/Login', {
+    CompanyDB: SAP_CONFIG.companyDB,
+    UserName: username,
+    Password: password,
+  }, false);
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(`SAP Login failed: ${response.status} - ${errorText}`);
+  }
+
+  const data = await response.json();
+
+  if (!data.SessionId) {
+    throw new Error('SAP Login response missing SessionId');
+  }
+
+  // Cache the session
+  userSessions.set(userId, {
+    sessionId: data.SessionId,
+    expiry: Date.now() + SESSION_DURATION_MS,
+    username
+  });
+
+  console.log(`SAP login successful for user ${username}`);
+  return data.SessionId;
+}
+
+/**
+ * Get or create a session for a specific user
+ * @param {string} userId - User ID
+ * @param {string} username - SAP username
+ * @param {string} password - SAP password
+ * @returns {Promise<string>} Session ID
+ */
+async function ensureUserSession(userId, username, password) {
+  const cached = userSessions.get(userId);
+  if (cached && cached.expiry > Date.now()) {
+    return cached.sessionId;
+  }
+  return loginAsUser(userId, username, password);
+}
+
+/**
+ * Clear a user's cached session
+ * @param {string} userId - User ID
+ */
+function clearUserSession(userId) {
+  userSessions.delete(userId);
+}
+
 /**
  * Create a Stock Transfer in SAP B1
  *
@@ -1355,4 +1474,9 @@ module.exports = {
   getRecentDeliveryNotes,
   // Single document fetch (for import with full bin data)
   getStockTransferByDocEntry,
+  // Per-user session management
+  testUserCredentials,
+  loginAsUser,
+  ensureUserSession,
+  clearUserSession,
 };

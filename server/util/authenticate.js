@@ -1,5 +1,6 @@
 const { expressjwt: jwt } = require('express-jwt');
 const jwtDecode = require('jsonwebtoken');
+const { loadUserProfile } = require('../middleware/permissions');
 
 /**
  * Verify JWT token
@@ -73,11 +74,16 @@ exports.getCompanyId = (req, res, next) => {
 };
 
 /**
- * Verify user has admin permissions
- * To be implemented based on permission system
+ * Load user profile after authentication
+ * Attaches userProfile and userPermissions to request
  */
-exports.verifyAdmin = (req, res, next) => {
-  // For now, allow all authenticated users
-  // TODO: Implement permission checking
-  next();
-};
+exports.loadProfile = loadUserProfile;
+
+/**
+ * Combined middleware: getCompanyId + loadProfile
+ * Use this for routes that need permission checking
+ */
+exports.getCompanyIdWithProfile = [
+  exports.getCompanyId,
+  loadUserProfile
+];

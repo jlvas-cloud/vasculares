@@ -36,6 +36,7 @@ const goodsReceiptRoutes = require('./routes/goodsReceipt');
 const consumptionRoutes = require('./routes/consumption');
 const reconciliationRoutes = require('./routes/reconciliation');
 const pedidosRoutes = require('./routes/pedidos');
+const userProfilesRoutes = require('./routes/userProfiles');
 
 app.use('/api/auth', authRoutes);
 app.use('/api/productos', productosRoutes);
@@ -50,6 +51,7 @@ app.use('/api/goods-receipt', goodsReceiptRoutes);
 app.use('/api/consumption', consumptionRoutes);
 app.use('/api/reconciliation', reconciliationRoutes);
 app.use('/api/pedidos', pedidosRoutes);
+app.use('/api/user-profiles', userProfilesRoutes);
 
 // Serve static files in production
 if (process.env.NODE_ENV === 'production') {
