@@ -1,6 +1,6 @@
 # Vasculares Project - Active Planning Document
 
-**Last Updated:** 2026-01-14 (External Document Import)
+**Last Updated:** 2026-01-16 (Per-User SAP Authentication & Roles)
 
 ---
 
@@ -392,29 +392,112 @@ Pedido {
 
 ---
 
-## NEXT STEPS
+### 9. Per-User SAP Authentication & Role Management - COMPLETE
 
-### Current Priority: Pedidos Feature
-1. Fix suggestedOrder formula (standalone bugfix)
-2. Implement Pedido model + API
-3. Planning page integration
-4. Pedidos history page
-5. GoodsReceipt linking
+**Status:** ✅ Implemented 2026-01-16
+
+**Goal:** Each user must use their own SAP credentials for operations (no service account fallback). Role-based access control for different user types.
+
+#### Problem Statement
+
+1. All SAP operations use a single service account - no audit trail of who made changes
+2. No role-based access control - all users have full access
+3. SAP licenses require individual user tracking
+
+#### Solution
+
+**Per-user SAP credentials** stored encrypted (AES-256-GCM) with **role-based access control**.
+
+#### Roles & Permissions
+
+| Role | Permissions | Requires SAP |
+|------|-------------|--------------|
+| admin | pedidos, goodsReceipts, consignments, viewInventory, editTargetStock, manageUsers | Yes |
+| almacen | pedidos, goodsReceipts, consignments, viewInventory | Yes |
+| sales | viewInventory, editTargetStock | No |
+| viewer | viewInventory | No |
+
+#### Implementation
+
+**Backend:**
+
+| File | Purpose |
+|------|---------|
+| `server/models/userProfileModel.js` | User roles + encrypted SAP credentials schema |
+| `server/services/encryptionService.js` | AES-256-GCM encryption for credentials |
+| `server/middleware/permissions.js` | Role-based access control middleware |
+| `server/controllers/userProfiles.js` | User profile + SAP credential management API |
+| `server/routes/userProfiles.js` | API routes with permission checks |
+| `server/services/sapService.js` | Per-user SAP session management (loginAsUser, ensureUserSession) |
+
+**Frontend:**
+
+| File | Purpose |
+|------|---------|
+| `client/src/pages/Settings.jsx` | SAP credential management (save, test, delete) |
+| `client/src/pages/UserManagement.jsx` | Admin page for user/role management |
+| `client/src/context/AuthContext.jsx` | Extended with profile + permission helpers |
+| `client/src/components/Layout.jsx` | Permission-based navigation visibility |
+| `client/src/lib/api.js` | Added userProfilesApi |
+
+**API Endpoints:**
+
+```
+# Current user
+GET    /api/user-profiles/me              # Get my profile
+PUT    /api/user-profiles/sap-credentials # Save SAP credentials
+POST   /api/user-profiles/sap-credentials/test # Test SAP connection
+DELETE /api/user-profiles/sap-credentials # Remove credentials
+
+# Admin only
+GET    /api/user-profiles                 # List all profiles
+GET    /api/user-profiles/available-users # Users without profiles
+POST   /api/user-profiles                 # Create profile
+PUT    /api/user-profiles/:id/role        # Change role
+PUT    /api/user-profiles/:id/status      # Activate/deactivate
+GET    /api/user-profiles/roles           # Get role definitions
+```
+
+**UI Pages:**
+
+- `/settings` - User configures their SAP credentials, sees their role
+- `/users` - Admin manages users (visible only to admin role)
+
+**Security:**
+
+- SAP passwords encrypted with AES-256-GCM (random IV per encryption)
+- Encryption key stored in `SAP_CREDENTIALS_KEY` env var (64 hex chars)
+- Credentials never sent to frontend (only `hasPassword: true/false`)
+- Per-user SAP sessions cached with 25-min expiry
+
+**Usage:**
+
+1. Admin assigns roles to users via `/users` page
+2. Users with admin/almacen role must configure SAP credentials in `/settings`
+3. Warning banner shown if role requires SAP but not configured
+4. SAP operations use user's credentials, not service account
+
+---
+
+## NEXT STEPS
 
 ### Testing Phase
 1. ✅ Reset script created and tested
 2. ✅ SAP Reconciliation System implemented
 3. ✅ Moving date window implemented (goLiveDate + incremental checks)
 4. ✅ External document import implemented
-5. ✅ External document import tested successfully
-6. Test end-to-end workflows (consignment, consumption)
+5. ✅ Pedidos (supplier order tracking) implemented
+6. ✅ Per-user SAP authentication & roles implemented
+7. Test end-to-end workflows with per-user SAP credentials
+8. Test role-based access control (admin, almacen, sales, viewer)
 
 ### Before Production
 1. Clear test data with `reset-inventory-data.js --confirm`
 2. Run final onboarding steps (see `server/ONBOARDING.md`)
-3. Test with real SAP data
-4. Verify SAP documents are created correctly
-5. Run a reconciliation to verify no external documents missed
+3. Configure first admin user with SAP credentials
+4. Test with real SAP data using individual user credentials
+5. Verify SAP documents are created correctly (and show correct user in SAP)
+6. Run a reconciliation to verify no external documents missed
 
 ---
 
@@ -432,6 +515,7 @@ Pedido {
 | `Consumo` | Consumption records | Creates DeliveryNotes in SAP |
 | `GoodsReceipt` | Incoming stock | Creates PurchaseDeliveryNotes in SAP |
 | `Pedido` | Supplier order tracking | **Not synced** - internal tracking only |
+| `UserProfile` | User roles + SAP credentials | Per-user SAP sessions |
 | `Transaccion` | Movement audit log | Not synced to SAP |
 
 ### Reconciliation Models
@@ -452,6 +536,12 @@ Pedido {
 **Document Creation:**
 - `createStockTransfer()` - Warehouse→Centro movements
 - `createDeliveryNote()` - Consumption/sales
+
+**Per-User Session Management:**
+- `testUserCredentials(username, password)` - Verify SAP credentials
+- `loginAsUser(userId, username, password)` - Create user session
+- `ensureUserSession(userId, username, password)` - Get/create cached session
+- `clearUserSession(userId)` - Remove cached session
 
 ---
 

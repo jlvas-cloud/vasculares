@@ -15,13 +15,18 @@ Medical device inventory management system for vascular products (coronary stent
 vasculares/
 ├── server/                     # Backend
 │   ├── models/                 # Mongoose schemas
+│   │   ├── userProfileModel.js       # User roles + SAP credentials
 │   │   ├── externalSapDocumentModel.js  # External SAP docs (reconciliation)
 │   │   └── reconciliationRunModel.js    # Reconciliation run history
 │   ├── controllers/            # Business logic
+│   │   ├── userProfiles.js     # User/role management API
 │   │   └── reconciliation.js   # Reconciliation API
+│   ├── middleware/             # Express middleware
+│   │   └── permissions.js      # Role-based access control
 │   ├── services/               # SAP integration
-│   │   ├── sapService.js       # Core SAP API calls
+│   │   ├── sapService.js       # Core SAP API calls + per-user sessions
 │   │   ├── sapSyncService.js   # Inventory sync from SAP
+│   │   ├── encryptionService.js # AES-256-GCM for SAP credentials
 │   │   ├── reconciliationService.js # Document reconciliation logic
 │   │   └── extractionService.js # Claude Vision for packing lists
 │   ├── jobs/                   # Scheduled jobs
@@ -38,9 +43,12 @@ vasculares/
 └── client/                     # Frontend (React)
     └── src/
         ├── pages/              # Main views
+        │   ├── Settings.jsx    # User SAP credentials config
+        │   ├── UserManagement.jsx # Admin user/role management
         │   └── Reconciliation.jsx # Admin reconciliation dashboard
         ├── components/         # UI components
-        └── lib/api.js          # API client (includes reconciliationApi)
+        ├── context/AuthContext.jsx # Auth + profile + permissions
+        └── lib/api.js          # API client (includes userProfilesApi)
 ```
 
 ## Key Data Models
@@ -54,6 +62,8 @@ vasculares/
 | `consignaciones` | Warehouse→Centro transfers | Creates SAP StockTransfers |
 | `consumos` | Consumption at centros | Creates SAP DeliveryNotes |
 | `goodsReceipts` | Incoming stock | Creates SAP PurchaseDeliveryNotes |
+| `pedidos` | Supplier order tracking | orderDate, status, items (internal only, not SAP) |
+| `userprofiles` | User roles + SAP credentials | userId, role, sapCredentials (encrypted) |
 | `externalsapdocuments` | External SAP docs detected | sapDocEntry, sapDocType, status |
 | `reconciliationruns` | Reconciliation job history | runType, status, stats |
 
@@ -81,6 +91,9 @@ vasculares/
 - `getRecentPurchaseDeliveryNotes()` - Reconciliation: query goods receipts
 - `getRecentStockTransfers()` - Reconciliation: query transfers
 - `getRecentDeliveryNotes()` - Reconciliation: query deliveries
+- `testUserCredentials()` - Verify user's SAP credentials
+- `loginAsUser()` - Create per-user SAP session
+- `ensureUserSession()` - Get or create cached user session
 
 ## Onboarding Flow
 
@@ -107,7 +120,7 @@ node scripts/reset-inventory-data.js --confirm
 node scripts/sync-inventory-from-sap.js
 ```
 
-## Recent Completed Work (2026-01-12, 2026-01-13, 2026-01-14)
+## Recent Completed Work (2026-01-12 to 2026-01-16)
 
 1. **SAP Bug Fixes** - 18 issues fixed (see ISSUES.md)
    - Race condition fixes with optimistic locking
@@ -154,6 +167,29 @@ node scripts/sync-inventory-from-sap.js
    - Support for: PurchaseDeliveryNote, StockTransfer, DeliveryNote
    - See `server/docs/external-document-import.md`
 
+9. **Supplier Order Tracking (Pedidos)** (2026-01-15)
+   - Track orders placed to supplier before GoodsReceipt arrives
+   - Fixed suggestedOrder formula (centro stock not fungible)
+   - GoodsReceipt → Pedido linking with auto-suggest
+   - New `/pedidos` page for order management
+   - Planning page integration with "Ordenar" button
+   - See `server/docs/pedidos-design.md`
+
+10. **Per-User SAP Authentication & Roles** (2026-01-16)
+    - Users must configure their own SAP credentials (no service account fallback)
+    - AES-256-GCM encrypted credential storage
+    - Per-user SAP session management with caching
+    - Role-based access control:
+      | Role | Permissions | Requires SAP |
+      |------|-------------|--------------|
+      | admin | All operations + user management | Yes |
+      | almacen | Recepciones, consignaciones, consumos | Yes |
+      | sales | View inventory, edit target stock | No |
+      | viewer | Read-only inventory access | No |
+    - `/settings` page for SAP credential management
+    - `/users` page for admin user/role management
+    - Permission-based navigation visibility
+
 ## Environment Variables
 
 ```env
@@ -183,6 +219,7 @@ SAP_CREDENTIALS_KEY=<64-hex-chars>   # Generate with: node -e "console.log(requi
 - `server/docs/sap-sqltable-allowlist.md` - **SAP tables needed in b1s_sqltable.conf (for production setup)**
 - `server/docs/sap-reconciliation-design.md` - SAP reconciliation system design (IMPLEMENTED)
 - `server/docs/external-document-import.md` - External SAP document import feature (IMPLEMENTED)
+- `server/docs/pedidos-design.md` - Supplier order tracking design (IMPLEMENTED)
 - `server/docs/exportar-inventario-sap.md` - Manual CSV export from SAP (fallback)
 - `server/docs/PLAN.md` - Active planning document (feature tracking, backlog)
 
