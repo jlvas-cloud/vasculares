@@ -257,6 +257,7 @@ heroku logs --tail --app vasculares-app
   - Heroku prunes devDependencies AFTER build, so final slug stays lean
   - Without this, `vite build` fails because vite is a devDependency
 - Static files served from `path.join(__dirname, '..', 'client', 'dist')` - absolute path required on Heroku
+- **CORS fix:** Static files served BEFORE CORS middleware in app.js, so CSS/JS assets bypass CORS checks
 - All env vars configured via `heroku config:set`
 
 ## Frontend Pages
