@@ -6,6 +6,7 @@ const allowedOrigins = [
   'http://localhost:3000',
   'http://localhost:3003',
   process.env.CLIENT_URL,
+  'https://vasculares-app-b24f028bcdfd.herokuapp.com',
 ].filter(Boolean);
 
 const corsOptions = {
