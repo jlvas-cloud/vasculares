@@ -193,22 +193,24 @@ node scripts/sync-inventory-from-sap.js
 ## Environment Variables
 
 ```env
-MONGODB_URI=mongodb+srv://.../<DATABASE_NAME>  # Database name: 613a3e44b934a2e264187048_vasculares
+# Required
+MONGODB_URI=mongodb+srv://.../<DATABASE_NAME>
+COMPANY_ID=613a3e44b934a2e264187048              # Multi-tenant company ID
+SAP_CREDENTIALS_KEY=<64-hex-chars>               # Generate: node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
+
+# SAP Connection (service account - used for queries, not document creation)
 SAP_B1_SERVICE_URL=https://94.74.64.47:50000/b1s/v1
-SAP_B1_COMPANY_DB=SBO_VASCULARES
+SAP_B1_COMPANY_DB=HOSPAL_ENERO
 SAP_B1_USERNAME=manager
 SAP_B1_PASSWORD=...
-COMPANY_ID=613a3e44b934a2e264187048
+
+# Optional
 DEBUG_SAP=false
-
-# Reconciliation (optional)
-RECONCILIATION_CRON=0 2 * * *        # Default: 2 AM daily
-ENABLE_CRON_JOBS=true                # Set to false to disable nightly job
-# Note: goLiveDate is set automatically by sync-inventory-from-sap.js
-
-# Per-user SAP credentials encryption (required for user management)
-SAP_CREDENTIALS_KEY=<64-hex-chars>   # Generate with: node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
+RECONCILIATION_CRON=0 2 * * *                    # Default: 2 AM daily
+ENABLE_CRON_JOBS=true                            # Set to false to disable nightly job
 ```
+
+**Note:** Document creation (GoodsReceipts, Consignments, Consumptions) uses per-user SAP credentials configured in `/settings`. The service account is only used for read queries.
 
 ## Documentation
 
@@ -223,6 +225,39 @@ SAP_CREDENTIALS_KEY=<64-hex-chars>   # Generate with: node -e "console.log(requi
 - `server/docs/exportar-inventario-sap.md` - Manual CSV export from SAP (fallback)
 - `server/docs/PLAN.md` - Active planning document (feature tracking, backlog)
 
+## Running the App
+
+```bash
+# Backend (from server/)
+npm run dev          # Starts on port 5000
+
+# Frontend (from client/)
+npm run dev          # Starts on port 5173 (Vite)
+
+# Build frontend
+npm run build        # Output in client/dist/
+```
+
+## Frontend Pages
+
+| Route | Page | Permission |
+|-------|------|------------|
+| `/` | Dashboard | All |
+| `/goods-receipt` | Nueva Recepción | goodsReceipts |
+| `/goods-receipt-history` | Historial Recepciones | goodsReceipts |
+| `/pedidos` | Pedidos a Proveedor | pedidos |
+| `/planning` | Planificación | viewInventory |
+| `/consignaciones` | Envíos a Centros | consignments |
+| `/consumption` | Registrar Consumo | consignments |
+| `/consumption/history` | Historial Consumos | consignments |
+| `/inventory` | Inventario | viewInventory |
+| `/products` | Productos | viewInventory |
+| `/locations` | Locaciones | viewInventory |
+| `/transactions` | Transacciones | viewInventory |
+| `/reconciliation` | Reconciliación SAP | admin |
+| `/settings` | Configuración SAP | All |
+| `/users` | Gestión Usuarios | manageUsers |
+
 ## Current State
 
 - **Products:** 92 total
@@ -230,4 +265,14 @@ SAP_CREDENTIALS_KEY=<64-hex-chars>   # Generate with: node -e "console.log(requi
   - 8 STENTS_RECUBIERTOS (Papyrus 369xxx/381xxx)
 - **Locations:** 6 configured (1 warehouse + 5 centros)
 - **SAP Integration:** Working (tested with real SAP)
-- **Status:** Pre-production, testing phase
+- **User Management:** Implemented with role-based access
+- **Admin User:** jlvasquezb@hospalmedica.com (Jose Luis Vasquez)
+- **Status:** Pre-production, testing per-user SAP auth
+
+## Next Steps
+
+1. Test per-user SAP authentication end-to-end
+2. Configure SAP credentials in `/settings`
+3. Test role-based access (create almacen/sales/viewer users)
+4. Run full workflow test with real SAP
+5. Clear test data and go live
