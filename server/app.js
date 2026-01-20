@@ -1,4 +1,5 @@
 const express = require('express');
+const path = require('path');
 const morgan = require('morgan');
 const helmet = require('helmet');
 const corsMiddleware = require('./util/cors');
@@ -55,9 +56,10 @@ app.use('/api/user-profiles', userProfilesRoutes);
 
 // Serve static files in production
 if (process.env.NODE_ENV === 'production') {
-  app.use(express.static('../client/dist'));
+  const clientDist = path.join(__dirname, '..', 'client', 'dist');
+  app.use(express.static(clientDist));
   app.get('*', (req, res) => {
-    res.sendFile('index.html', { root: '../client/dist' });
+    res.sendFile(path.join(clientDist, 'index.html'));
   });
 }
 
