@@ -238,6 +238,27 @@ npm run dev          # Starts on port 5173 (Vite)
 npm run build        # Output in client/dist/
 ```
 
+## Heroku Deployment
+
+**App URL:** https://vasculares-app-b24f028bcdfd.herokuapp.com/
+
+**Deploy:**
+```bash
+git push heroku main
+```
+
+**View logs:**
+```bash
+heroku logs --tail --app vasculares-app
+```
+
+**Heroku Config Notes:**
+- `NPM_CONFIG_PRODUCTION=false` - Required so devDependencies (vite, tailwind) are installed during build
+  - Heroku prunes devDependencies AFTER build, so final slug stays lean
+  - Without this, `vite build` fails because vite is a devDependency
+- Static files served from `path.join(__dirname, '..', 'client', 'dist')` - absolute path required on Heroku
+- All env vars configured via `heroku config:set`
+
 ## Frontend Pages
 
 | Route | Page | Permission |
@@ -267,7 +288,8 @@ npm run build        # Output in client/dist/
 - **SAP Integration:** Working (tested with real SAP)
 - **User Management:** Implemented with role-based access
 - **Admin User:** jlvasquezb@hospalmedica.com (Jose Luis Vasquez)
-- **Status:** Pre-production, testing per-user SAP auth
+- **Status:** Deployed to Heroku, testing per-user SAP auth
+- **Heroku App:** vasculares-app (https://vasculares-app-b24f028bcdfd.herokuapp.com/)
 
 ## Next Steps
 
