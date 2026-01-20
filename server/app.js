@@ -7,6 +7,12 @@ require('./connection'); // Initialize MongoDB connection
 
 const app = express();
 
+// Serve static files FIRST in production (before CORS, so assets bypass CORS)
+if (process.env.NODE_ENV === 'production') {
+  const clientDist = path.join(__dirname, '..', 'client', 'dist');
+  app.use(express.static(clientDist));
+}
+
 // Middleware
 app.use(helmet());
 app.use(corsMiddleware);
@@ -54,11 +60,10 @@ app.use('/api/reconciliation', reconciliationRoutes);
 app.use('/api/pedidos', pedidosRoutes);
 app.use('/api/user-profiles', userProfilesRoutes);
 
-// Serve static files in production
+// SPA catch-all route in production (static files served at top, before CORS)
 if (process.env.NODE_ENV === 'production') {
-  const clientDist = path.join(__dirname, '..', 'client', 'dist');
-  app.use(express.static(clientDist));
   app.get('*', (req, res) => {
+    const clientDist = path.join(__dirname, '..', 'client', 'dist');
     res.sendFile(path.join(clientDist, 'index.html'));
   });
 }
