@@ -20,7 +20,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '../components/ui/select';
-import { CheckCircle, XCircle, AlertTriangle, Loader2, UserPlus, Shield, ShieldOff } from 'lucide-react';
+import { CheckCircle, XCircle, AlertTriangle, Loader2, UserPlus, Shield, ShieldOff, Pencil } from 'lucide-react';
 
 const ROLE_LABELS = {
   admin: 'Administrador',
@@ -260,14 +260,23 @@ export default function UserManagement() {
                         )}
                       </div>
 
-                      {/* Role Badge */}
-                      <Badge
-                        variant={ROLE_COLORS[p.role]}
-                        className="cursor-pointer hover:opacity-80"
-                        onClick={() => !isCurrentUser && openRoleDialog(p)}
-                      >
-                        {ROLE_LABELS[p.role]}
-                      </Badge>
+                      {/* Role Badge + Edit */}
+                      <div className="flex items-center gap-1">
+                        <Badge variant={ROLE_COLORS[p.role]}>
+                          {ROLE_LABELS[p.role]}
+                        </Badge>
+                        {!isCurrentUser && (
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => openRoleDialog(p)}
+                            title="Cambiar rol"
+                            className="h-6 w-6 p-0"
+                          >
+                            <Pencil className="h-3 w-3" />
+                          </Button>
+                        )}
+                      </div>
 
                       {/* Actions */}
                       {!isCurrentUser && (
