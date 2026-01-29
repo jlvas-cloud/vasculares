@@ -1,7 +1,7 @@
 import { Link, useLocation } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { Button } from './ui/button';
-import { Package, MapPin, LogOut, Home, Boxes, History, BarChart3, Truck, PackagePlus, FileBox, Activity, ClipboardList, RefreshCw, ShoppingCart, Settings, Users } from 'lucide-react';
+import { Package, MapPin, LogOut, Home, Boxes, History, BarChart3, Truck, PackagePlus, FileBox, Activity, ClipboardList, RefreshCw, ShoppingCart, Settings, Users, TrendingUp } from 'lucide-react';
 
 export default function Layout({ children }) {
   const { user, company, profile, logout, hasPermission } = useAuth();
@@ -18,6 +18,7 @@ export default function Layout({ children }) {
     { type: 'header', name: 'Consignación' },
     { name: 'Planificación', href: '/planning', icon: BarChart3 },
     { name: 'Envíos', href: '/consignaciones', icon: Truck },
+    { name: 'Movimientos', href: '/movimientos', icon: TrendingUp },
 
     { type: 'header', name: 'Consumo' },
     { name: 'Registrar', href: '/consumption', icon: Activity },

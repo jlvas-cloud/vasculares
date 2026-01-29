@@ -96,6 +96,9 @@ export const analyticsApi = {
 
   // Planning data
   getPlanningData: (params) => api.get('/analytics/planning-data', { params }),
+
+  // Monthly movements per product per centro
+  getMonthlyMovements: (params) => api.get('/analytics/monthly-movements', { params }),
 };
 
 // Inventario Objetivos API (Per-location targets)

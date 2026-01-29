@@ -13,6 +13,7 @@ const {
   getProductosModel,
   getLotesModel,
   getInventarioModel,
+  getTransaccionesModel,
 } = require('../getModel');
 const sapService = require('../services/sapService');
 const { extractConsumptionDocument } = require('../services/extractionService');
@@ -117,14 +118,39 @@ exports.extractFromDocument = async (req, res, next) => {
 
     console.log(`Extracting consumption data from ${req.files.length} file(s)...`);
 
-    // Extract data using Claude Vision
-    const extractionResult = await extractConsumptionDocument(req.files);
-
-    // Try to match extracted items with inventory at this Centro
+    // Query known products and lots to constrain extraction
     const Lotes = await getLotesModel(req.companyId);
     const Productos = await getProductosModel(req.companyId);
 
+    // Build constraints: all products + lots at this centro
+    const allProducts = await Productos.find({}, { code: 1, sapItemCode: 1, name: 1 }).lean();
+    const constraints = {
+      products: allProducts.map(p => ({
+        code: p.sapItemCode || p.code,
+        name: p.name,
+      })),
+    };
+
+    if (centroId) {
+      const lotsAtCentro = await Lotes.find({
+        currentLocationId: centroId,
+        quantityAvailable: { $gt: 0 },
+        status: 'ACTIVE',
+      }).populate('productId', 'code sapItemCode name').lean();
+
+      constraints.lots = lotsAtCentro.map(l => ({
+        lotNumber: l.lotNumber,
+        productCode: l.productId?.sapItemCode || l.productId?.code || '',
+        productName: l.productId?.name || '',
+      }));
+    }
+
+    // Extract data using Gemini with known product/lot constraints
+    const extractionResult = await extractConsumptionDocument(req.files, constraints);
+
     const enrichedItems = [];
+    console.log('Extraction result items:', JSON.stringify(extractionResult.items, null, 2));
+    console.log('CentroId:', centroId);
     for (const item of extractionResult.items) {
       let matchedProduct = null;
       let matchedLote = null;
@@ -132,12 +158,18 @@ exports.extractFromDocument = async (req, res, next) => {
 
       // Try to find product by code
       if (item.code) {
+        // Clean the code: remove non-numeric characters and trim
+        const cleanCode = String(item.code).replace(/[^0-9]/g, '').trim();
+        console.log(`Looking for product: raw="${item.code}", clean="${cleanCode}"`);
         matchedProduct = await Productos.findOne({
           $or: [
+            { sapItemCode: cleanCode },
             { sapItemCode: String(item.code) },
+            { code: cleanCode },
             { code: item.code },
           ],
         }).lean();
+        console.log(`  Match result: ${matchedProduct ? matchedProduct.name : 'NOT FOUND'}`);
       }
 
       // If product found, get available lots at this Centro
@@ -173,7 +205,7 @@ exports.extractFromDocument = async (req, res, next) => {
         matchedLoteId: matchedLote?._id || null,
         matchedLotNumber: matchedLote?.lotNumber || item.lotNumber,
         availableLots,
-        needsLotSelection: !matchedLote && availableLots.length > 1,
+        needsLotSelection: !matchedLote && availableLots.length > 0,
         price: matchedProduct?.price || null,
         currency: matchedProduct?.currency || 'USD',
       });
@@ -409,6 +441,41 @@ exports.create = async (req, res, next) => {
       });
 
       await consumo.save({ session });
+
+      // Create transaction records for audit log
+      const Transacciones = await getTransaccionesModel(req.companyId);
+      for (const { product, lote, quantity } of validatedItems) {
+        const transaccion = new Transacciones({
+          type: 'CONSUMPTION',
+          productId: product._id,
+          lotId: lote._id,
+          lotNumber: lote.lotNumber,
+          toLocationId: centroId,
+          quantity,
+          consumption: {
+            patientInfo: patientName || null,
+            procedureInfo: procedureType || null,
+            doctorName: doctorName || null,
+          },
+          transactionDate: procedureDate ? new Date(procedureDate) : new Date(),
+          notes: `Consumo #${consumo._id} - ${centro.name}${sapResult.sapDocNum ? ` - SAP #${sapResult.sapDocNum}` : ''}`,
+          performedBy: {
+            _id: req.user._id,
+            firstname: req.user.firstname,
+            lastname: req.user.lastname,
+            email: req.user.email,
+          },
+          status: 'COMPLETED',
+          sapIntegration: {
+            pushed: true,
+            docEntry: sapResult.sapDocEntry,
+            docNum: sapResult.sapDocNum,
+            docType: 'DeliveryNotes',
+            syncDate: new Date(),
+          },
+        });
+        await transaccion.save({ session });
+      }
 
       // Update inventario aggregates
       const Inventario = await getInventarioModel(req.companyId);

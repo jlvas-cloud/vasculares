@@ -19,4 +19,7 @@ router.get('/consumption/by-size', analyticsController.getConsumptionBySize);
 // Planning data endpoint (Excel-like view)
 router.get('/planning-data', analyticsController.getPlanningData);
 
+// Monthly movements per product per centro (trailing 12 months)
+router.get('/monthly-movements', analyticsController.getMonthlyMovements);
+
 module.exports = router;

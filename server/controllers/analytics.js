@@ -859,3 +859,177 @@ exports.getPlanningData = async (req, res, next) => {
     next(error);
   }
 };
+
+/**
+ * GET /api/analytics/monthly-movements
+ * Get per-product monthly consumption at a specific centro over trailing 12 months
+ * @query centroId - Required: centro location ID
+ * @query category - Optional: filter by product category
+ */
+exports.getMonthlyMovements = async (req, res, next) => {
+  try {
+    const { getInventarioObjetivosModel } = require('../getModel');
+    const mongoose = require('mongoose');
+
+    const { getConsumosModel } = require('../getModel');
+
+    const Productos = await getProductosModel(req.companyId);
+    const Consumos = await getConsumosModel(req.companyId);
+    const Inventario = await getInventarioModel(req.companyId);
+    const InventarioObjetivos = await getInventarioObjetivosModel(req.companyId);
+
+    const { centroId, category } = req.query;
+
+    if (!centroId) {
+      return res.status(400).json({ error: 'centroId is required' });
+    }
+
+    // Build trailing 12 months labels
+    const now = new Date();
+    const months = [];
+    for (let i = 11; i >= 0; i--) {
+      const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+      months.push({
+        key: `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`,
+        year: d.getFullYear(),
+        month: d.getMonth() + 1,
+      });
+    }
+
+    const twelveMonthsAgo = new Date(now.getFullYear(), now.getMonth() - 11, 1);
+
+    // Aggregate from Consumos collection (unwind items to get per-product data)
+    const consumptionData = await Consumos.aggregate([
+      {
+        $match: {
+          centroId: new mongoose.Types.ObjectId(centroId),
+          createdAt: { $gte: twelveMonthsAgo },
+        },
+      },
+      { $unwind: '$items' },
+      {
+        $group: {
+          _id: {
+            productId: '$items.productId',
+            year: { $year: '$createdAt' },
+            month: { $month: '$createdAt' },
+          },
+          quantity: { $sum: '$items.quantity' },
+        },
+      },
+    ]);
+
+    // Build lookup: productId -> { "YYYY-MM": quantity }
+    const consumptionByProduct = {};
+    for (const row of consumptionData) {
+      const pid = row._id.productId.toString();
+      if (!consumptionByProduct[pid]) consumptionByProduct[pid] = {};
+      const key = `${row._id.year}-${String(row._id.month).padStart(2, '0')}`;
+      consumptionByProduct[pid][key] = row.quantity;
+    }
+
+    // Get all products
+    const productQuery = { active: true };
+    if (category) productQuery.category = category;
+    const products = await Productos.find(productQuery).lean();
+
+    // Sort by category, name, diameter, length (same as planning)
+    const getDimensions = (product) => {
+      const specs = product.specifications || {};
+      if (specs.diameter != null && specs.length != null) {
+        return { diameter: specs.diameter, length: specs.length };
+      }
+      if (specs.size && typeof specs.size === 'string') {
+        const parts = specs.size.split('/');
+        return {
+          diameter: parseFloat(parts[0]) || 999,
+          length: parseFloat(parts[1]) || 999,
+        };
+      }
+      return { diameter: 999, length: 999 };
+    };
+
+    products.sort((a, b) => {
+      if (a.category !== b.category) return a.category.localeCompare(b.category);
+      const nameA = a.name.split(' ')[0] || a.name;
+      const nameB = b.name.split(' ')[0] || b.name;
+      if (nameA !== nameB) return nameA.localeCompare(nameB);
+      const dimA = getDimensions(a);
+      const dimB = getDimensions(b);
+      if (dimA.diameter !== dimB.diameter) return dimA.diameter - dimB.diameter;
+      return dimA.length - dimB.length;
+    });
+
+    // Get stock at this centro
+    const stockData = await Inventario.aggregate([
+      { $match: { locationId: new mongoose.Types.ObjectId(centroId) } },
+      {
+        $group: {
+          _id: '$productId',
+          currentStock: { $sum: '$quantityAvailable' },
+        },
+      },
+    ]);
+    const stockByProduct = {};
+    for (const s of stockData) {
+      stockByProduct[s._id.toString()] = s.currentStock;
+    }
+
+    // Get target stocks for this centro
+    const targets = await InventarioObjetivos.find({
+      locationId: centroId,
+      active: true,
+    }).lean();
+    const targetByProduct = {};
+    for (const t of targets) {
+      targetByProduct[t.productId.toString()] = t.targetStock;
+    }
+
+    // Build response items
+    const calculateStatus = (current, target) => {
+      if (target === 0) return 'sin_configurar';
+      const pct = (current / target) * 100;
+      if (pct < 50) return 'critical';
+      if (pct < 75) return 'warning';
+      return 'ok';
+    };
+
+    const items = products.map((p) => {
+      const pid = p._id.toString();
+      const monthlyData = {};
+      let total = 0;
+
+      for (const m of months) {
+        const qty = (consumptionByProduct[pid] && consumptionByProduct[pid][m.key]) || 0;
+        monthlyData[m.key] = qty;
+        total += qty;
+      }
+
+      const average = Math.round((total / 12) * 100) / 100;
+      const currentStock = stockByProduct[pid] || 0;
+      const targetStock = targetByProduct[pid] || 0;
+
+      return {
+        productId: pid,
+        productName: p.name,
+        sapItemCode: p.sapItemCode || p.code,
+        category: p.category,
+        size: p.specifications?.size || '',
+        monthlyData,
+        total,
+        average,
+        currentStock,
+        targetStock,
+        status: calculateStatus(currentStock, targetStock),
+      };
+    });
+
+    res.json({
+      months: months.map((m) => m.key),
+      items,
+    });
+  } catch (error) {
+    console.error('Error getting monthly movements:', error);
+    next(error);
+  }
+};

@@ -19,6 +19,7 @@ import Reconciliation from './pages/Reconciliation';
 import Pedidos from './pages/Pedidos';
 import Settings from './pages/Settings';
 import UserManagement from './pages/UserManagement';
+import Movimientos from './pages/Movimientos';
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -62,6 +63,7 @@ function App() {
                         <Route path="/transactions" element={<TransactionHistory />} />
                         <Route path="/planning" element={<Planning />} />
                         <Route path="/consignaciones" element={<Consignaciones />} />
+                        <Route path="/movimientos" element={<Movimientos />} />
                         <Route path="/goods-receipt" element={<GoodsReceipt />} />
                         <Route path="/goods-receipt-history" element={<GoodsReceiptHistory />} />
                         <Route path="/reconciliation" element={<Reconciliation />} />
