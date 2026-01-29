@@ -51,23 +51,32 @@ If any field is unclear, make your best guess and add a warning message.`;
 const CONSUMPTION_EXTRACTION_PROMPT = `Analyze these consumption documents and extract all consumed medical products.
 
 The documents may be:
-- Product stickers/labels from packaging
-- Handwritten notes listing consumed items
+- Product stickers/labels from packaging (often BIOTRONIK stickers with barcodes)
+- Handwritten consumption forms ("Reporte Material a Consignación" or similar)
 - Typed consumption reports
 - Any combination of formats
 
+Each file/page represents ONE consumed item. Extract one item per document/page.
+
 For each consumed item, extract what you can see:
-- code: Product/article code (number, if visible - typically 6 digits for Orsiro products)
+- code: Product/article code (number, typically 6 digits starting with 3 or 4, e.g., 419113). Look for fields labeled "Referencia", "REF", "Article", or "Código".
 - name: Product name or description
-- lotNumber: Lot/batch number (if visible, may be labeled "Lote", "Batch", "LOT")
+- lotNumber: Lot/batch number. This is CRITICAL - read it very carefully character by character. Lot numbers are typically 8 digits (e.g., "02252644"). Look for fields labeled "Lote", "LOT", "Batch", or "SN". On BIOTRONIK stickers, the lot number appears after "LOT" or near the barcode. On handwritten forms, look for the "LOTE" field.
 - quantity: Number consumed (default to 1 if not specified)
-- patientName: Patient name (if visible)
-- doctorName: Doctor name (if visible)
-- procedureDate: Date in YYYY-MM-DD format (if visible)
+- patientName: Patient name (if visible, look for "Paciente" field)
+- doctorName: Doctor name (if visible, look for "Doctor" or "Responsable" field)
+- procedureDate: Date in YYYY-MM-DD format (if visible, look for "Fecha" field. Dates are typically in DD/MM/YY format in Latin America)
+
+CRITICAL RULES:
+- If a BIOTRONIK product sticker is present, it is the SOURCE OF TRUTH. Use the product code, lot number, and all data from the sticker over any handwritten fields. The sticker is machine-printed and always accurate.
+- For lot numbers: read each digit individually and carefully - handwritten digits are often ambiguous
+- Lot numbers for BIOTRONIK products are typically 8 digits starting with 0
+- If you are unsure about any digit, add a warning
+- NEVER guess or fabricate a lot number - if illegible, set to null and add a warning
 
 IMPORTANT:
 - Extract ALL items you can identify
-- If lot number is not visible, set lotNumber to null
+- If lot number is not visible or illegible, set lotNumber to null and add a warning
 - If quantity is unclear, set to 1
 - Be thorough - look at ALL images/pages
 
