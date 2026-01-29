@@ -139,7 +139,7 @@ exports.testSapCredentials = async (req, res, next) => {
         lastVerified: profile.sapCredentials.lastVerified
       });
     } catch (sapError) {
-      res.status(401).json({
+      res.status(400).json({
         success: false,
         error: 'SAP authentication failed',
         message: sapError.message || 'Invalid username or password'
