@@ -202,7 +202,9 @@ export default function Consumption() {
     }
 
     // Reset selection
+    setSelectedProduct('');
     setSelectedLot('');
+    setProductSearch('');
     setQuantity(1);
     toast.success('Item agregado');
   };
