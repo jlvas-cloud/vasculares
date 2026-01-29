@@ -1,6 +1,6 @@
 /**
  * Extraction Service
- * Uses Claude Vision API to extract data from packing list images
+ * Uses Claude Vision API to extract data from packing list images and PDFs
  */
 const Anthropic = require('@anthropic-ai/sdk');
 
@@ -106,27 +106,31 @@ async function extractPackingList(files) {
     // Convert buffer to base64
     const base64Data = file.buffer.toString('base64');
 
-    // Map mimetype to Claude's expected format
+    // Handle PDFs as document type, images as image type
     let mediaType = file.mimetype;
     if (mediaType === 'application/pdf') {
-      // For PDFs, we'll need to handle differently
-      // For now, skip PDFs (future enhancement: convert to images)
-      console.warn('PDF files not yet supported, skipping:', file.originalname);
-      continue;
+      content.push({
+        type: 'document',
+        source: {
+          type: 'base64',
+          media_type: 'application/pdf',
+          data: base64Data
+        }
+      });
+    } else {
+      content.push({
+        type: 'image',
+        source: {
+          type: 'base64',
+          media_type: mediaType,
+          data: base64Data
+        }
+      });
     }
-
-    content.push({
-      type: 'image',
-      source: {
-        type: 'base64',
-        media_type: mediaType,
-        data: base64Data
-      }
-    });
   }
 
   if (content.length === 0) {
-    throw new Error('No valid image files to process. PDF support coming soon.');
+    throw new Error('No valid files to process.');
   }
 
   // Add the extraction prompt
@@ -199,26 +203,31 @@ async function extractConsumptionDocument(files) {
     // Convert buffer to base64
     const base64Data = file.buffer.toString('base64');
 
-    // Map mimetype to Claude's expected format
+    // Handle PDFs as document type, images as image type
     let mediaType = file.mimetype;
     if (mediaType === 'application/pdf') {
-      // For PDFs, we'll need to handle differently
-      console.warn('PDF files not yet supported, skipping:', file.originalname);
-      continue;
+      content.push({
+        type: 'document',
+        source: {
+          type: 'base64',
+          media_type: 'application/pdf',
+          data: base64Data
+        }
+      });
+    } else {
+      content.push({
+        type: 'image',
+        source: {
+          type: 'base64',
+          media_type: mediaType,
+          data: base64Data
+        }
+      });
     }
-
-    content.push({
-      type: 'image',
-      source: {
-        type: 'base64',
-        media_type: mediaType,
-        data: base64Data
-      }
-    });
   }
 
   if (content.length === 0) {
-    throw new Error('No valid image files to process. PDF support coming soon.');
+    throw new Error('No valid files to process.');
   }
 
   // Add the extraction prompt
