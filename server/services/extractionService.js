@@ -151,7 +151,7 @@ async function extractPackingList(files) {
   try {
     // Call Claude Vision API
     const response = await anthropic.messages.create({
-      model: 'claude-sonnet-4-20250514',
+      model: 'claude-opus-4-5-20251101',
       max_tokens: 8192,
       messages: [
         {
@@ -248,7 +248,7 @@ async function extractConsumptionDocument(files) {
   try {
     // Call Claude Vision API
     const response = await anthropic.messages.create({
-      model: 'claude-sonnet-4-20250514',
+      model: 'claude-opus-4-5-20251101',
       max_tokens: 8192,
       messages: [
         {
