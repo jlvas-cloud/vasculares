@@ -16,7 +16,8 @@ const {
 exports.getMonthlyConsumption = async (req, res, next) => {
   try {
     await getProductosModel(req.companyId);
-    const Transacciones = await getTransaccionesModel(req.companyId);
+    const { getConsumosModel } = require('../getModel');
+    const Consumos = await getConsumosModel(req.companyId);
 
     const { productId, startDate, endDate, year } = req.query;
 
@@ -31,32 +32,34 @@ exports.getMonthlyConsumption = async (req, res, next) => {
       if (startDate) dateFilter.$gte = new Date(startDate);
       if (endDate) dateFilter.$lte = new Date(endDate);
     } else {
-      // Default to last 12 months
       const twelveMonthsAgo = new Date();
       twelveMonthsAgo.setMonth(twelveMonthsAgo.getMonth() - 12);
       dateFilter.$gte = twelveMonthsAgo;
     }
 
-    // Build match criteria
-    const matchCriteria = {
-      type: 'CONSUMPTION',
-      transactionDate: dateFilter,
-    };
+    // Build match criteria on Consumos collection
+    const matchCriteria = { createdAt: dateFilter };
+
+    // Aggregate by month and product from Consumos
+    const pipeline = [
+      { $match: matchCriteria },
+      { $unwind: '$items' },
+    ];
+
     if (productId) {
-      matchCriteria.productId = productId;
+      const mongoose = require('mongoose');
+      pipeline.push({ $match: { 'items.productId': new mongoose.Types.ObjectId(productId) } });
     }
 
-    // Aggregate by month and product
-    const monthlyData = await Transacciones.aggregate([
-      { $match: matchCriteria },
+    pipeline.push(
       {
         $group: {
           _id: {
-            productId: '$productId',
-            year: { $year: '$transactionDate' },
-            month: { $month: '$transactionDate' },
+            productId: '$items.productId',
+            year: { $year: '$createdAt' },
+            month: { $month: '$createdAt' },
           },
-          totalQuantity: { $sum: '$quantity' },
+          totalQuantity: { $sum: '$items.quantity' },
           transactionCount: { $sum: 1 },
         },
       },
@@ -83,8 +86,9 @@ exports.getMonthlyConsumption = async (req, res, next) => {
         },
       },
       { $sort: { year: 1, month: 1, productName: 1 } },
-    ]);
+    );
 
+    const monthlyData = await Consumos.aggregate(pipeline);
     res.json(monthlyData);
   } catch (error) {
     console.error('Error getting monthly consumption:', error);
@@ -100,7 +104,8 @@ exports.getConsumptionByLocation = async (req, res, next) => {
   try {
     await getProductosModel(req.companyId);
     await getLocacionesModel(req.companyId);
-    const Transacciones = await getTransaccionesModel(req.companyId);
+    const { getConsumosModel } = require('../getModel');
+    const Consumos = await getConsumosModel(req.companyId);
 
     const { productId, locationId, startDate, endDate } = req.query;
 
@@ -115,24 +120,27 @@ exports.getConsumptionByLocation = async (req, res, next) => {
       dateFilter.$gte = threeMonthsAgo;
     }
 
-    // Build match criteria
-    const matchCriteria = {
-      type: 'CONSUMPTION',
-      transactionDate: dateFilter,
-    };
-    if (productId) matchCriteria.productId = productId;
-    if (locationId) matchCriteria.toLocationId = locationId;
+    const mongoose = require('mongoose');
+    const matchCriteria = { createdAt: dateFilter };
+    if (locationId) matchCriteria.centroId = new mongoose.Types.ObjectId(locationId);
 
-    // Aggregate by location
-    const locationData = await Transacciones.aggregate([
+    const pipeline = [
       { $match: matchCriteria },
+      { $unwind: '$items' },
+    ];
+
+    if (productId) {
+      pipeline.push({ $match: { 'items.productId': new mongoose.Types.ObjectId(productId) } });
+    }
+
+    pipeline.push(
       {
         $group: {
           _id: {
-            locationId: '$toLocationId',
-            productId: '$productId',
+            locationId: '$centroId',
+            productId: '$items.productId',
           },
-          totalQuantity: { $sum: '$quantity' },
+          totalQuantity: { $sum: '$items.quantity' },
           transactionCount: { $sum: 1 },
         },
       },
@@ -169,8 +177,9 @@ exports.getConsumptionByLocation = async (req, res, next) => {
         },
       },
       { $sort: { locationName: 1, productName: 1 } },
-    ]);
+    );
 
+    const locationData = await Consumos.aggregate(pipeline);
     res.json(locationData);
   } catch (error) {
     console.error('Error getting consumption by location:', error);
@@ -186,7 +195,8 @@ exports.getConsumptionTrends = async (req, res, next) => {
   try {
     await getProductosModel(req.companyId);
     await getInventarioModel(req.companyId);
-    const Transacciones = await getTransaccionesModel(req.companyId);
+    const { getConsumosModel } = require('../getModel');
+    const Consumos = await getConsumosModel(req.companyId);
     const Inventario = await getInventarioModel(req.companyId);
 
     const { months = 3 } = req.query; // Default to 3 months
@@ -195,21 +205,17 @@ exports.getConsumptionTrends = async (req, res, next) => {
     const startDate = new Date();
     startDate.setMonth(startDate.getMonth() - parseInt(months));
 
-    // Get consumption per product with averages
-    const trends = await Transacciones.aggregate([
-      {
-        $match: {
-          type: 'CONSUMPTION',
-          transactionDate: { $gte: startDate },
-        },
-      },
+    // Get consumption per product with averages from Consumos
+    const trends = await Consumos.aggregate([
+      { $match: { createdAt: { $gte: startDate } } },
+      { $unwind: '$items' },
       {
         $group: {
-          _id: '$productId',
-          totalConsumed: { $sum: '$quantity' },
+          _id: '$items.productId',
+          totalConsumed: { $sum: '$items.quantity' },
           transactionCount: { $sum: 1 },
-          firstTransaction: { $min: '$transactionDate' },
-          lastTransaction: { $max: '$transactionDate' },
+          firstTransaction: { $min: '$createdAt' },
+          lastTransaction: { $max: '$createdAt' },
         },
       },
       {
@@ -223,11 +229,10 @@ exports.getConsumptionTrends = async (req, res, next) => {
       { $unwind: '$product' },
       {
         $addFields: {
-          // Calculate days between first and last transaction
           daysActive: {
             $divide: [
               { $subtract: ['$lastTransaction', '$firstTransaction'] },
-              1000 * 60 * 60 * 24, // Convert ms to days
+              1000 * 60 * 60 * 24,
             ],
           },
           monthsAnalyzed: parseInt(months),
@@ -235,7 +240,6 @@ exports.getConsumptionTrends = async (req, res, next) => {
       },
       {
         $addFields: {
-          // Average monthly consumption
           avgMonthlyConsumption: {
             $cond: {
               if: { $gt: ['$monthsAnalyzed', 0] },
@@ -243,7 +247,6 @@ exports.getConsumptionTrends = async (req, res, next) => {
               else: 0,
             },
           },
-          // Average per transaction
           avgPerTransaction: {
             $cond: {
               if: { $gt: ['$transactionCount', 0] },
@@ -332,7 +335,8 @@ exports.getConsumptionTrends = async (req, res, next) => {
 exports.getConsumptionBySize = async (req, res, next) => {
   try {
     await getProductosModel(req.companyId);
-    const Transacciones = await getTransaccionesModel(req.companyId);
+    const { getConsumosModel } = require('../getModel');
+    const Consumos = await getConsumosModel(req.companyId);
 
     const { category, startDate, endDate } = req.query;
 
@@ -347,19 +351,16 @@ exports.getConsumptionBySize = async (req, res, next) => {
       dateFilter.$gte = threeMonthsAgo;
     }
 
-    // Build match criteria
-    const matchCriteria = {
-      type: 'CONSUMPTION',
-      transactionDate: dateFilter,
-    };
+    const matchCriteria = { createdAt: dateFilter };
 
-    // Aggregate by size
-    const sizeData = await Transacciones.aggregate([
+    // Aggregate by size from Consumos
+    const sizeData = await Consumos.aggregate([
       { $match: matchCriteria },
+      { $unwind: '$items' },
       {
         $lookup: {
           from: 'productos',
-          localField: 'productId',
+          localField: 'items.productId',
           foreignField: '_id',
           as: 'product',
         },
@@ -374,7 +375,7 @@ exports.getConsumptionBySize = async (req, res, next) => {
             size: '$product.specifications.size',
             category: '$product.category',
           },
-          totalQuantity: { $sum: '$quantity' },
+          totalQuantity: { $sum: '$items.quantity' },
           transactionCount: { $sum: 1 },
           products: { $addToSet: '$product.name' },
         },
@@ -614,65 +615,71 @@ exports.getPlanningData = async (req, res, next) => {
     const twelveMonthsAgo = new Date();
     twelveMonthsAgo.setMonth(twelveMonthsAgo.getMonth() - 12);
 
-    let consumptionMatch = {
-      transactionDate: { $gte: twelveMonthsAgo },
-    };
+    let consumptionData;
 
     // If viewing specific location:
-    // - Warehouse: calculate outflow (CONSIGNMENT transactions FROM warehouse)
-    // - Centro: calculate consumption (CONSUMPTION transactions AT centro)
-    // - Aggregated warehouse view: calculate total system consumption
-    if (isLocationView) {
-      if (isViewingWarehouse) {
-        // Warehouse outflow: consignments from this warehouse
-        consumptionMatch.type = 'CONSIGNMENT';
-        consumptionMatch.fromLocationId = new mongoose.Types.ObjectId(locationId);
-      } else {
-        // Centro consumption: actual usage at this centro
-        consumptionMatch.type = 'CONSUMPTION';
-        consumptionMatch.toLocationId = new mongoose.Types.ObjectId(locationId);
-      }
+    // - Warehouse: calculate outflow (CONSIGNMENT transactions FROM warehouse) — uses Transacciones
+    // - Centro: calculate consumption — uses Consumos collection
+    // - Aggregated warehouse view: calculate total system consumption — uses Consumos collection
+    if (isLocationView && isViewingWarehouse) {
+      // Warehouse outflow: consignments from this warehouse (Transacciones has these)
+      consumptionData = await Transacciones.aggregate([
+        {
+          $match: {
+            type: 'CONSIGNMENT',
+            fromLocationId: new mongoose.Types.ObjectId(locationId),
+            transactionDate: { $gte: twelveMonthsAgo },
+          },
+        },
+        {
+          $group: {
+            _id: '$productId',
+            totalConsumed: { $sum: '$quantity' },
+            firstTransaction: { $min: '$transactionDate' },
+            lastTransaction: { $max: '$transactionDate' },
+          },
+        },
+        {
+          $addFields: {
+            monthsOfHistory: {
+              $max: [1, { $ceil: { $divide: [{ $subtract: ['$lastTransaction', '$firstTransaction'] }, 1000 * 60 * 60 * 24 * 30] } }],
+            },
+          },
+        },
+        { $addFields: { avgMonthlyConsumption: { $divide: ['$totalConsumed', '$monthsOfHistory'] } } },
+      ]);
     } else {
-      // Aggregated warehouse view: total system consumption (all centros)
-      consumptionMatch.type = 'CONSUMPTION';
-    }
+      // Centro or aggregated view: query Consumos collection
+      const { getConsumosModel } = require('../getModel');
+      const Consumos = await getConsumosModel(req.companyId);
 
-    const consumptionData = await Transacciones.aggregate([
-      { $match: consumptionMatch },
-      {
-        $group: {
-          _id: '$productId',
-          totalConsumed: { $sum: '$quantity' },
-          firstTransaction: { $min: '$transactionDate' },
-          lastTransaction: { $max: '$transactionDate' },
-        },
-      },
-      {
-        $addFields: {
-          // Calculate actual months of history (min 1 month to avoid division by zero)
-          monthsOfHistory: {
-            $max: [
-              1,
-              {
-                $ceil: {
-                  $divide: [
-                    { $subtract: ['$lastTransaction', '$firstTransaction'] },
-                    1000 * 60 * 60 * 24 * 30, // Convert ms to months (approx 30 days)
-                  ],
-                },
-              },
-            ],
+      const consumosMatch = { createdAt: { $gte: twelveMonthsAgo } };
+      if (isLocationView) {
+        // Specific centro
+        consumosMatch.centroId = new mongoose.Types.ObjectId(locationId);
+      }
+
+      consumptionData = await Consumos.aggregate([
+        { $match: consumosMatch },
+        { $unwind: '$items' },
+        {
+          $group: {
+            _id: '$items.productId',
+            totalConsumed: { $sum: '$items.quantity' },
+            firstTransaction: { $min: '$createdAt' },
+            lastTransaction: { $max: '$createdAt' },
           },
         },
-      },
-      {
-        $addFields: {
-          avgMonthlyConsumption: {
-            $divide: ['$totalConsumed', '$monthsOfHistory'],
+        {
+          $addFields: {
+            monthsOfHistory: {
+              $max: [1, { $ceil: { $divide: [{ $subtract: ['$lastTransaction', '$firstTransaction'] }, 1000 * 60 * 60 * 24 * 30] } }],
+            },
           },
         },
-      },
-    ]);
+        { $addFields: { avgMonthlyConsumption: { $divide: ['$totalConsumed', '$monthsOfHistory'] } } },
+      ]);
+    }
 
     // Get per-location targets
     let locationTargets = {};

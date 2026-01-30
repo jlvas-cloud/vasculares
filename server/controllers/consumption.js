@@ -149,8 +149,6 @@ exports.extractFromDocument = async (req, res, next) => {
     const extractionResult = await extractConsumptionDocument(req.files, constraints);
 
     const enrichedItems = [];
-    console.log('Extraction result items:', JSON.stringify(extractionResult.items, null, 2));
-    console.log('CentroId:', centroId);
     for (const item of extractionResult.items) {
       let matchedProduct = null;
       let matchedLote = null;
@@ -160,7 +158,6 @@ exports.extractFromDocument = async (req, res, next) => {
       if (item.code) {
         // Clean the code: remove non-numeric characters and trim
         const cleanCode = String(item.code).replace(/[^0-9]/g, '').trim();
-        console.log(`Looking for product: raw="${item.code}", clean="${cleanCode}"`);
         matchedProduct = await Productos.findOne({
           $or: [
             { sapItemCode: cleanCode },
@@ -169,7 +166,6 @@ exports.extractFromDocument = async (req, res, next) => {
             { code: item.code },
           ],
         }).lean();
-        console.log(`  Match result: ${matchedProduct ? matchedProduct.name : 'NOT FOUND'}`);
       }
 
       // If product found, get available lots at this Centro

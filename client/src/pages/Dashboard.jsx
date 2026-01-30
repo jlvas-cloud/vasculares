@@ -85,7 +85,7 @@ export default function Dashboard() {
         </CardHeader>
         <CardContent className="grid gap-4 md:grid-cols-3">
           <Button asChild variant="outline" className="h-24">
-            <Link to="/warehouse-receipt">
+            <Link to="/goods-receipt">
               <div className="text-center">
                 <Package className="mx-auto h-6 w-6 mb-2" />
                 <div>Recibir en Almacén</div>
@@ -94,7 +94,7 @@ export default function Dashboard() {
           </Button>
 
           <Button asChild variant="outline" className="h-24">
-            <Link to="/consignment">
+            <Link to="/consignaciones">
               <div className="text-center">
                 <TrendingUp className="mx-auto h-6 w-6 mb-2" />
                 <div>Enviar en Consignación</div>
