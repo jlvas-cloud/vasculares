@@ -22,4 +22,7 @@ router.get('/planning-data', analyticsController.getPlanningData);
 // Monthly movements per product per centro (trailing 12 months)
 router.get('/monthly-movements', analyticsController.getMonthlyMovements);
 
+// Dashboard consumption analytics (all centros, trailing 12 months)
+router.get('/dashboard-consumption', analyticsController.getDashboardConsumption);
+
 module.exports = router;

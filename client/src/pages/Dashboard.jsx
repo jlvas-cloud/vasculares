@@ -4,6 +4,7 @@ import { inventarioApi } from '../lib/api';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../components/ui/card';
 import { Button } from '../components/ui/button';
 import { Package, MapPin, AlertTriangle, TrendingUp } from 'lucide-react';
+import DashboardConsumptionCharts from '../components/DashboardConsumptionCharts';
 
 export default function Dashboard() {
   const { data: stats, isLoading } = useQuery({
@@ -111,6 +112,9 @@ export default function Dashboard() {
           </Button>
         </CardContent>
       </Card>
+
+      {/* Consumption Analytics */}
+      <DashboardConsumptionCharts />
 
       {/* Alerts */}
       {alerts && (alerts.lowStock?.length > 0 || alerts.expiringSoon?.length > 0 || alerts.expired?.length > 0) && (

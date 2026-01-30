@@ -99,6 +99,9 @@ export const analyticsApi = {
 
   // Monthly movements per product per centro
   getMonthlyMovements: (params) => api.get('/analytics/monthly-movements', { params }),
+
+  // Dashboard consumption (all centros, trailing 12 months)
+  getDashboardConsumption: () => api.get('/analytics/dashboard-consumption'),
 };
 
 // Inventario Objetivos API (Per-location targets)

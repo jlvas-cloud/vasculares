@@ -1033,3 +1033,107 @@ exports.getMonthlyMovements = async (req, res, next) => {
     next(error);
   }
 };
+
+/**
+ * GET /api/analytics/dashboard-consumption
+ * Aggregated monthly consumption across all centros for the dashboard
+ * No params — always returns trailing 12 months
+ */
+exports.getDashboardConsumption = async (req, res, next) => {
+  try {
+    const mongoose = require('mongoose');
+    const { getConsumosModel } = require('../getModel');
+
+    const Consumos = await getConsumosModel(req.companyId);
+    const Locaciones = await getLocacionesModel(req.companyId);
+
+    // Trailing 12 months
+    const now = new Date();
+    const months = [];
+    for (let i = 11; i >= 0; i--) {
+      const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+      months.push({
+        key: `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`,
+        year: d.getFullYear(),
+        month: d.getMonth() + 1,
+      });
+    }
+    const twelveMonthsAgo = new Date(now.getFullYear(), now.getMonth() - 11, 1);
+
+    // Get active centros
+    const centros = await Locaciones.find({
+      type: { $in: ['CENTRO', 'HOSPITAL', 'CLINIC'] },
+      active: true,
+    }).select('_id name').lean();
+
+    // Aggregate: total items consumed per centro per month
+    const consumptionData = await Consumos.aggregate([
+      { $match: { createdAt: { $gte: twelveMonthsAgo } } },
+      { $unwind: '$items' },
+      {
+        $group: {
+          _id: {
+            centroId: '$centroId',
+            year: { $year: '$createdAt' },
+            month: { $month: '$createdAt' },
+          },
+          quantity: { $sum: '$items.quantity' },
+        },
+      },
+    ]);
+
+    // Initialize maps
+    const totalByMonth = {};
+    const byCentroByMonth = {};
+
+    for (const m of months) {
+      totalByMonth[m.key] = 0;
+    }
+    for (const centro of centros) {
+      const cid = centro._id.toString();
+      byCentroByMonth[cid] = {};
+      for (const m of months) {
+        byCentroByMonth[cid][m.key] = 0;
+      }
+    }
+
+    // Fill in data
+    for (const row of consumptionData) {
+      const cid = row._id.centroId.toString();
+      const key = `${row._id.year}-${String(row._id.month).padStart(2, '0')}`;
+      if (totalByMonth[key] !== undefined) {
+        totalByMonth[key] += row.quantity;
+      }
+      if (byCentroByMonth[cid] && byCentroByMonth[cid][key] !== undefined) {
+        byCentroByMonth[cid][key] = row.quantity;
+      }
+    }
+
+    // Summary
+    const monthKeys = months.map((m) => m.key);
+    const currentMonthKey = monthKeys[monthKeys.length - 1];
+    const previousMonthKey = monthKeys[monthKeys.length - 2];
+    const currentMonth = totalByMonth[currentMonthKey] || 0;
+    const previousMonth = totalByMonth[previousMonthKey] || 0;
+    const totalLast12Months = Object.values(totalByMonth).reduce((s, v) => s + v, 0);
+    const trend = previousMonth > 0
+      ? Math.round(((currentMonth - previousMonth) / previousMonth) * 1000) / 10
+      : 0;
+
+    res.json({
+      months: monthKeys,
+      centros: centros.map((c) => ({ _id: c._id, name: c.name })),
+      totalByMonth,
+      byCentroByMonth,
+      summary: {
+        totalLast12Months,
+        currentMonth,
+        previousMonth,
+        trend,
+      },
+    });
+  } catch (error) {
+    console.error('Error getting dashboard consumption:', error);
+    next(error);
+  }
+};
