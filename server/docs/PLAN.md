@@ -1,6 +1,6 @@
 # Vasculares Project - Active Planning Document
 
-**Last Updated:** 2026-01-16 (Per-User SAP Authentication & Roles)
+**Last Updated:** 2026-01-30 (Analytics Consistency + Dashboard Charts)
 
 ---
 
@@ -479,6 +479,98 @@ GET    /api/user-profiles/roles           # Get role definitions
 
 ---
 
+### 10. Consumption Document OCR Extraction - COMPLETE
+
+**Status:** ✅ Implemented 2026-01-28
+
+Extracts patient/procedure/product data from uploaded consumption documents using Google Gemini 2.5 Pro.
+
+**Files Created/Modified:**
+- `server/services/extractionService.js` - Added `extractConsumptionDocument()` using Gemini 2.5 Pro
+- `server/controllers/consumption.js` - Added `extractFromDocument` endpoint
+- `server/routes/consumption.js` - Added `POST /extract` route
+- `client/src/pages/Consumption.jsx` - Added file upload tab
+- `client/src/lib/api.js` - Added `consumptionApi.extract()`
+
+**Key Design:**
+- Constrained matching: only matches against products and lots actually at the selected Centro
+- Auto-selects lot when only one available for a product
+- Returns enriched items with matched product/lot data for user review
+
+---
+
+### 11. Movimientos Page - COMPLETE
+
+**Status:** ✅ Implemented 2026-01-28
+
+Monthly consumption per product per centro (trailing 12 months).
+
+**Files Created/Modified:**
+- `server/controllers/analytics.js` - Added `getMonthlyMovements` endpoint
+- `server/routes/analytics.js` - Added route
+- `client/src/pages/Movimientos.jsx` - New page with Centro/Category filters
+- `client/src/lib/api.js` - Added `analyticsApi.getMonthlyMovements()`
+
+**Features:**
+- Centro and Category dropdown filters
+- Smooth transitions using `placeholderData: keepPreviousData` (no full-page reload)
+- Queries `Consumos` collection with `$unwind` pattern
+
+---
+
+### 12. Dashboard Consumption Analytics - COMPLETE
+
+**Status:** ✅ Implemented 2026-01-29
+
+Bar chart visualization of monthly Orsiro consumption on the Dashboard.
+
+**Files Created/Modified:**
+- `client/package.json` - Added `recharts` dependency
+- `server/controllers/analytics.js` - Added `getDashboardConsumption` endpoint
+- `server/routes/analytics.js` - Added route
+- `client/src/components/DashboardConsumptionCharts.jsx` - Self-contained chart component
+- `client/src/pages/Dashboard.jsx` - Integrated charts + fixed quick action links
+- `client/src/lib/api.js` - Added `analyticsApi.getDashboardConsumption()`
+
+**Component Structure:**
+- 3 summary cards (Total 12m, This Month, Trend %)
+- Full-width total bar chart (blue, all centros combined)
+- 2-column grid of individual per-centro bar charts (each with distinct color)
+
+---
+
+### 13. Analytics Consistency: Consumos Collection - COMPLETE
+
+**Status:** ✅ Implemented 2026-01-30
+
+Switched all consumption analytics endpoints to query `Consumos` collection instead of `Transacciones`.
+
+**Endpoints Modified:**
+- `getMonthlyConsumption` - Consumos with `$unwind '$items'`
+- `getConsumptionByLocation` - Consumos with `$unwind '$items'`
+- `getConsumptionTrends` - Consumos with `$unwind '$items'`
+- `getConsumptionBySize` - Consumos with `$unwind '$items'`
+- `getPlanningData` - Split: CONSIGNMENT stays on Transacciones, CONSUMPTION uses Consumos
+
+**Rationale:** `Consumos` has all historical consumption data. `Transacciones` only has records created after the transaction audit feature was added.
+
+---
+
+### 14. Consumption Transaction Records - COMPLETE
+
+**Status:** ✅ Implemented 2026-01-28
+
+Consumption controller now writes to `transacciones` audit log (completing the pattern started by goods receipts and consignments).
+
+**File Modified:** `server/controllers/consumption.js`
+
+Each consumed item gets a CONSUMPTION transaction with:
+- Patient/procedure/doctor info
+- SAP doc reference (docEntry, docNum)
+- Performed by user details
+
+---
+
 ## NEXT STEPS
 
 ### Testing Phase
@@ -488,8 +580,13 @@ GET    /api/user-profiles/roles           # Get role definitions
 4. ✅ External document import implemented
 5. ✅ Pedidos (supplier order tracking) implemented
 6. ✅ Per-user SAP authentication & roles implemented
-7. Test end-to-end workflows with per-user SAP credentials
-8. Test role-based access control (admin, almacen, sales, viewer)
+7. ✅ Consumption OCR extraction implemented
+8. ✅ Movimientos page implemented
+9. ✅ Dashboard consumption analytics implemented
+10. ✅ Analytics consistency (all query Consumos)
+11. Test end-to-end workflows on Heroku
+12. Test per-user SAP authentication
+13. Test role-based access control (admin, almacen, sales, viewer)
 
 ### Before Production
 1. Clear test data with `reset-inventory-data.js --confirm`
@@ -516,7 +613,7 @@ GET    /api/user-profiles/roles           # Get role definitions
 | `GoodsReceipt` | Incoming stock | Creates PurchaseDeliveryNotes in SAP |
 | `Pedido` | Supplier order tracking | **Not synced** - internal tracking only |
 | `UserProfile` | User roles + SAP credentials | Per-user SAP sessions |
-| `Transaccion` | Movement audit log | Not synced to SAP |
+| `Transaccion` | Movement audit log (all 3 flows write here) | Not synced to SAP |
 
 ### Reconciliation Models
 

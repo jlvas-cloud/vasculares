@@ -409,3 +409,65 @@ ORDER BY T0.DocDate DESC, T0.DocEntry, T1.LineNum
 ```
 
 ---
+
+### Consumption OCR Extraction with Gemini (2026-01-28)
+**Status:** COMPLETE
+
+Google Gemini 2.5 Pro extracts patient/procedure/product data from consumption documents.
+
+**Files Modified:**
+- `services/extractionService.js` - Added `extractConsumptionDocument()` using Gemini
+- `controllers/consumption.js` - Added `extractFromDocument` endpoint
+- `routes/consumption.js` - Added `POST /extract` route
+
+**Key Design:** Constrained matching - only matches against products/lots at the selected Centro.
+
+---
+
+### Movimientos Page (2026-01-28)
+**Status:** COMPLETE
+
+Monthly consumption per product per centro (trailing 12 months) with Centro/Category filters.
+
+**Files Created:**
+- `client/src/pages/Movimientos.jsx`
+
+**Backend:** `GET /api/analytics/monthly-movements` in `controllers/analytics.js`
+
+---
+
+### Dashboard Consumption Analytics (2026-01-29)
+**Status:** COMPLETE
+
+Bar chart visualization on Dashboard using `recharts` library.
+
+**Files Created:**
+- `client/src/components/DashboardConsumptionCharts.jsx`
+
+**Backend:** `GET /api/analytics/dashboard-consumption` in `controllers/analytics.js`
+
+**Features:** 3 summary cards + total bar chart + individual bar chart per centro (2-column grid).
+
+---
+
+### Analytics Consistency Fix (2026-01-30)
+**Status:** COMPLETE
+
+All consumption analytics endpoints switched from `Transacciones` to `Consumos` collection.
+
+**Endpoints Fixed:** `getMonthlyConsumption`, `getConsumptionByLocation`, `getConsumptionTrends`, `getConsumptionBySize`, `getPlanningData` (consumption portion).
+
+**Pattern:** `{ $unwind: '$items' }` then group by `items.productId` / `items.quantity`.
+
+**Rationale:** `Consumos` has all historical data. `Transacciones` only for CONSIGNMENT outflow and audit log.
+
+---
+
+### Consumption Transaction Records (2026-01-28)
+**Status:** COMPLETE
+
+Consumption controller now writes CONSUMPTION entries to `transacciones` audit log, completing the pattern (goods receipts and consignments already wrote to it).
+
+**File Modified:** `controllers/consumption.js`
+
+---

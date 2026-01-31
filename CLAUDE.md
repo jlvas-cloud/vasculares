@@ -28,7 +28,7 @@ vasculares/
 │   │   ├── sapSyncService.js   # Inventory sync from SAP
 │   │   ├── encryptionService.js # AES-256-GCM for SAP credentials
 │   │   ├── reconciliationService.js # Document reconciliation logic
-│   │   └── extractionService.js # Claude Vision for packing lists
+│   │   └── extractionService.js # Claude Vision (packing lists) + Gemini (consumption docs)
 │   ├── jobs/                   # Scheduled jobs
 │   │   └── nightlyReconciliation.js # Nightly SAP document check
 │   ├── scripts/                # CLI utilities
@@ -43,10 +43,14 @@ vasculares/
 └── client/                     # Frontend (React)
     └── src/
         ├── pages/              # Main views
+        │   ├── Dashboard.jsx   # Dashboard with stats + consumption analytics
+        │   ├── Movimientos.jsx # Monthly consumption per product per centro
+        │   ├── Consumption.jsx # Register consumption (manual + OCR)
         │   ├── Settings.jsx    # User SAP credentials config
         │   ├── UserManagement.jsx # Admin user/role management
         │   └── Reconciliation.jsx # Admin reconciliation dashboard
         ├── components/         # UI components
+        │   ├── DashboardConsumptionCharts.jsx # Recharts bar charts
         ├── context/AuthContext.jsx # Auth + profile + permissions
         └── lib/api.js          # API client (includes userProfilesApi)
 ```
@@ -120,7 +124,7 @@ node scripts/reset-inventory-data.js --confirm
 node scripts/sync-inventory-from-sap.js
 ```
 
-## Recent Completed Work (2026-01-12 to 2026-01-16)
+## Recent Completed Work (2026-01-12 to 2026-01-30)
 
 1. **SAP Bug Fixes** - 18 issues fixed (see ISSUES.md)
    - Race condition fixes with optimistic locking
@@ -189,6 +193,35 @@ node scripts/sync-inventory-from-sap.js
     - `/settings` page for SAP credential management
     - `/users` page for admin user/role management
     - Permission-based navigation visibility
+
+11. **Consumption Document OCR Extraction** (2026-01-28)
+    - Gemini 2.5 Pro extracts patient/procedure data from uploaded consumption documents
+    - Constrained matching: only matches against products and lots actually at the Centro
+    - Auto-selects lot when only one available for a product
+    - `POST /api/consumption/extract` endpoint with multipart file upload
+    - Frontend: File upload tab in Consumption page
+
+12. **Movimientos Page** (2026-01-28)
+    - `/movimientos` page showing monthly consumption per product per centro
+    - Trailing 12 months with Centro and Category filters
+    - `GET /api/analytics/monthly-movements` endpoint
+    - Smooth filter transitions using `placeholderData: keepPreviousData`
+
+13. **Consumption Transaction Records** (2026-01-28)
+    - Consumption controller now writes to `transacciones` audit log (like goods receipts and consignments)
+    - Each consumed item gets a CONSUMPTION transaction with patient/procedure info and SAP doc reference
+
+14. **Dashboard Consumption Analytics** (2026-01-29)
+    - `recharts` library for bar chart visualization
+    - `DashboardConsumptionCharts` component: 3 summary cards + total bar chart + per-centro bar charts
+    - `GET /api/analytics/dashboard-consumption` endpoint (trailing 12 months, all centros)
+    - Individual bar chart per centro in a 2-column grid (not stacked)
+
+15. **Analytics Consistency: Query Consumos Collection** (2026-01-30)
+    - All 5 analytics endpoints switched from querying `Transacciones` to `Consumos` collection
+    - Pattern: `$unwind '$items'` then `$group` by `items.productId`/`items.quantity`
+    - `getPlanningData` split: warehouse outflow (CONSIGNMENT) stays on `Transacciones`, consumption uses `Consumos`
+    - Fixed Dashboard quick action links (`/goods-receipt`, `/consignaciones`)
 
 ## Environment Variables
 
@@ -276,6 +309,7 @@ heroku logs --tail --app vasculares-app
 | `/products` | Productos | viewInventory |
 | `/locations` | Locaciones | viewInventory |
 | `/transactions` | Transacciones | viewInventory |
+| `/movimientos` | Movimientos (consumo mensual) | viewInventory |
 | `/reconciliation` | Reconciliación SAP | admin |
 | `/settings` | Configuración SAP | All |
 | `/users` | Gestión Usuarios | manageUsers |
@@ -289,13 +323,21 @@ heroku logs --tail --app vasculares-app
 - **SAP Integration:** Working (tested with real SAP)
 - **User Management:** Implemented with role-based access
 - **Admin User:** jlvasquezb@hospalmedica.com (Jose Luis Vasquez)
-- **Status:** Deployed to Heroku, testing per-user SAP auth
+- **Status:** Deployed to Heroku, actively testing
 - **Heroku App:** vasculares-app (https://vasculares-app-b24f028bcdfd.herokuapp.com/)
+- **Charts:** `recharts` library for Dashboard consumption analytics
+- **OCR:** Gemini 2.5 Pro for consumption document extraction, Claude Vision for packing lists
+- **Analytics:** All consumption analytics query `Consumos` collection (not `Transacciones`)
+
+## Key Architecture Decisions
+
+- **Consumos vs Transacciones for analytics:** `Consumos` is the authoritative source for consumption analytics (has all historical data with `items[]` array). `Transacciones` is used only for CONSIGNMENT outflow queries and as a general audit log.
+- **Per-centro bar charts (not stacked):** Dashboard shows individual bar chart per centro rather than stacked bars — easier to read at a glance.
+- **Constrained OCR matching:** Extraction only matches against products/lots actually at the selected Centro, preventing false matches.
 
 ## Next Steps
 
-1. Test per-user SAP authentication end-to-end
-2. Configure SAP credentials in `/settings`
+1. Test full end-to-end workflows on Heroku
+2. Test per-user SAP authentication
 3. Test role-based access (create almacen/sales/viewer users)
-4. Run full workflow test with real SAP
-5. Clear test data and go live
+4. Clear test data and go live
