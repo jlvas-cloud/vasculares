@@ -23,14 +23,23 @@ let scheduledTask = null;
 
 /**
  * Run reconciliation for all companies
+ * If COMPANY_ID env var is set, only runs for that company (single-tenant mode)
  */
 async function runForAllCompanies() {
   console.log('[NightlyReconciliation] Starting nightly reconciliation run...');
 
   try {
-    // Get all companies
-    const Company = await getCompanyModel();
-    const companies = await Company.find({ isActive: { $ne: false } }).lean();
+    let companies;
+
+    // Single-tenant mode: only run for configured company
+    if (process.env.COMPANY_ID) {
+      console.log(`[NightlyReconciliation] Single-tenant mode: using COMPANY_ID ${process.env.COMPANY_ID}`);
+      companies = [{ _id: process.env.COMPANY_ID }];
+    } else {
+      // Multi-tenant mode: get all active companies
+      const Company = await getCompanyModel();
+      companies = await Company.find({ isActive: { $ne: false } }).lean();
+    }
 
     console.log(`[NightlyReconciliation] Found ${companies.length} active companies`);
 

@@ -115,6 +115,25 @@ async function runReconciliation(companyId, options = {}) {
   const ReconciliationRuns = await getReconciliationRunsModel(companyId);
   const ExternalSapDocuments = await getExternalSapDocumentsModel(companyId);
 
+  // Duplicate-run guard for NIGHTLY runs: skip if one already completed in the last 30 minutes
+  if (runType === 'NIGHTLY') {
+    const thirtyMinutesAgo = new Date(Date.now() - 30 * 60 * 1000);
+    const recentRun = await ReconciliationRuns.findOne({
+      runType: 'NIGHTLY',
+      status: { $in: ['COMPLETED', 'RUNNING'] },
+      startedAt: { $gte: thirtyMinutesAgo },
+    }).lean();
+
+    if (recentRun) {
+      console.log(`[Reconciliation] Skipping duplicate NIGHTLY run for company ${companyId} - recent run ${recentRun._id} (${recentRun.status}) started at ${recentRun.startedAt}`);
+      return {
+        status: 'SKIPPED',
+        reason: 'Duplicate nightly run detected',
+        existingRunId: recentRun._id,
+      };
+    }
+  }
+
   // Create run record (config will be updated after date calculation)
   const run = new ReconciliationRuns({
     runType,
