@@ -22,6 +22,7 @@ export default function GoodsReceipt() {
   const [selectedWarehouse, setSelectedWarehouse] = useState('');
   const [selectedSupplier, setSelectedSupplier] = useState('');
   const [notes, setNotes] = useState('');
+  const [docDate, setDocDate] = useState(new Date().toISOString().split('T')[0]);
 
   // Known suppliers with SAP codes
   const suppliers = [
@@ -259,6 +260,7 @@ export default function GoodsReceipt() {
       supplier: supplierName,
       supplierCode: supplierCode,
       notes: notes || undefined,
+      docDate,
       pushToSap: true,
       items: validItems.map((item) => ({
         productId: item.productId,
@@ -369,7 +371,7 @@ export default function GoodsReceipt() {
             <CardTitle>Informacion General</CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="grid gap-4 md:grid-cols-3">
+            <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
               <div className="grid gap-2">
                 <Label>Almacen Destino *</Label>
                 <Select value={selectedWarehouse} onValueChange={setSelectedWarehouse}>
@@ -416,6 +418,14 @@ export default function GoodsReceipt() {
                   value={notes}
                   onChange={(e) => setNotes(e.target.value)}
                   placeholder="Notas adicionales"
+                />
+              </div>
+              <div className="grid gap-2">
+                <Label>Fecha Contabilizacion</Label>
+                <Input
+                  type="date"
+                  value={docDate}
+                  onChange={(e) => setDocDate(e.target.value)}
                 />
               </div>
             </div>

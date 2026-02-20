@@ -243,6 +243,7 @@ exports.create = async (req, res, next) => {
       procedureDate,
       procedureType,
       notes,
+      docDate,
     } = req.body;
 
     // ============================================
@@ -325,6 +326,7 @@ exports.create = async (req, res, next) => {
         items: sapItems,
         comments: sapComments,
         doctorName: doctorName || null,
+        docDate: docDate || undefined,
       });
 
       sapResult = {
@@ -786,6 +788,7 @@ exports.retrySap = async (req, res, next) => {
         items: sapItems,
         comments: sapComments,
         doctorName: consumo.doctorName || null,
+        docDate: consumo.createdAt ? new Date(consumo.createdAt).toISOString().split('T')[0] : undefined,
       });
 
       // Update with success

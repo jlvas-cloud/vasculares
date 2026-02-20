@@ -18,6 +18,7 @@ export default function Planning() {
   const [editOpen, setEditOpen] = useState(false);
   const [consignmentOpen, setConsignmentOpen] = useState(false);
   const [consignmentItems, setConsignmentItems] = useState([]);
+  const [consignmentDocDate, setConsignmentDocDate] = useState(new Date().toISOString().split('T')[0]);
   const [expandedProducts, setExpandedProducts] = useState({});
   const [warehouseLots, setWarehouseLots] = useState({});
   const [loadingLots, setLoadingLots] = useState(false);
@@ -313,6 +314,7 @@ export default function Planning() {
       toLocationId: location,
       items,
       notes: '',
+      docDate: consignmentDocDate,
     };
 
     createConsignmentMutation.mutate(consignmentData);
@@ -495,6 +497,7 @@ export default function Planning() {
                 setConsignmentItems(items);
                 setExpandedProducts({});
                 setWarehouseLots({});
+                setConsignmentDocDate(new Date().toISOString().split('T')[0]);
                 setConsignmentOpen(true);
 
                 // Load lots from warehouse
@@ -1049,6 +1052,15 @@ export default function Planning() {
                   }, 0)}
                 </span>
               </div>
+            </div>
+            <div className="flex items-center gap-3 mt-3">
+              <Label className="whitespace-nowrap">Fecha Contabilizacion (SAP)</Label>
+              <Input
+                type="date"
+                value={consignmentDocDate}
+                onChange={(e) => setConsignmentDocDate(e.target.value)}
+                className="w-auto"
+              />
             </div>
           </div>
           <DialogFooter>

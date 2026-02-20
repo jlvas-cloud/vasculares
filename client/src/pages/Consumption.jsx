@@ -40,6 +40,7 @@ export default function Consumption() {
   const [procedureDate, setProcedureDate] = useState('');
   const [procedureType, setProcedureType] = useState('');
   const [notes, setNotes] = useState('');
+  const [docDate, setDocDate] = useState(new Date().toISOString().split('T')[0]);
 
   // Result dialog
   const [resultDialogOpen, setResultDialogOpen] = useState(false);
@@ -318,6 +319,7 @@ export default function Consumption() {
       procedureDate: procedureDate || undefined,
       procedureType: procedureType || undefined,
       notes: notes || undefined,
+      docDate,
     };
 
     createMutation.mutate(data);
@@ -890,6 +892,15 @@ export default function Consumption() {
                   value={procedureType}
                   onChange={(e) => setProcedureType(e.target.value)}
                   placeholder="PCI, TAVI, etc."
+                />
+              </div>
+              <div className="grid gap-2">
+                <Label htmlFor="docDate">Fecha Contabilizacion (SAP)</Label>
+                <Input
+                  id="docDate"
+                  type="date"
+                  value={docDate}
+                  onChange={(e) => setDocDate(e.target.value)}
                 />
               </div>
               <div className="md:col-span-2 grid gap-2">

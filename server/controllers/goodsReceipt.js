@@ -89,7 +89,7 @@ async function updateInventario(companyId, productId, locationId, session = null
  */
 exports.createGoodsReceipt = async (req, res, next) => {
   try {
-    const { locationId, items, supplier, supplierCode, notes, pushToSap = true } = req.body;
+    const { locationId, items, supplier, supplierCode, notes, pushToSap = true, docDate } = req.body;
 
     // ============================================
     // PHASE 1: VALIDATION (no saves)
@@ -178,7 +178,8 @@ exports.createGoodsReceipt = async (req, res, next) => {
           sapWarehouseCode,
           supplier,
           supplierCode,
-          notes
+          notes,
+          docDate,
         });
       } catch (sapError) {
         // SAP failed - return error, save nothing locally
@@ -397,7 +398,7 @@ exports.createGoodsReceipt = async (req, res, next) => {
  * Push goods receipt to SAP via PurchaseDeliveryNotes (Entrada de Mercancía)
  * This creates a proper Goods Receipt PO that can be used to create supplier invoices
  */
-async function pushToSapGoodsReceipt({ items, productMap, sapWarehouseCode, supplier, supplierCode, notes }) {
+async function pushToSapGoodsReceipt({ items, productMap, sapWarehouseCode, supplier, supplierCode, notes, docDate }) {
   const sessionId = await sapService.ensureSession();
 
   // Build document lines with required TaxCode
@@ -428,11 +429,10 @@ async function pushToSapGoodsReceipt({ items, productMap, sapWarehouseCode, supp
   });
 
   // Create PurchaseDeliveryNotes (Entrada de Mercancía) in SAP
-  // Note: Use today's date for production. Test DB may have outdated exchange rates.
-  const docDate = new Date().toISOString().split('T')[0];
+  const effectiveDocDate = docDate || new Date().toISOString().split('T')[0];
 
   const payload = {
-    DocDate: docDate,
+    DocDate: effectiveDocDate,
     CardCode: supplierCode, // Required for PurchaseDeliveryNotes
     Comments: `Entrada desde Vasculares App${notes ? ` - ${notes}` : ''}`,
     DocumentLines: documentLines
@@ -689,7 +689,8 @@ exports.retrySapPush = async (req, res, next) => {
         sapWarehouseCode: receipt.sapWarehouseCode || '01',
         supplier: receipt.supplier,
         supplierCode: receipt.supplierCode,
-        notes: receipt.notes
+        notes: receipt.notes,
+        docDate: receipt.createdAt ? new Date(receipt.createdAt).toISOString().split('T')[0] : undefined,
       });
     } catch (sapError) {
       console.error('SAP retry push failed:', sapError);

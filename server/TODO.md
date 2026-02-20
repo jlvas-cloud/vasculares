@@ -2,6 +2,26 @@
 
 ## Pending Fixes
 
+### SAP AllowList: IBT1 and WTQ1 Tables Missing (2026-02-20)
+**Status:** PENDING — Requires SAP partner (Winder)
+
+The `b1s_sqltable.conf` on `PRUEBA_HOSPAL` is missing two tables needed for reconciliation SQL queries:
+
+| Table | Purpose | Used By |
+|-------|---------|---------|
+| `IBT1` | Batch allocation details | All 3 reconciliation queries (Goods Receipts, Stock Transfers, Delivery Notes) |
+| `WTQ1` | Bin allocation for transfers | Stock Transfer reconciliation query (`BnAbsEntry` column for source/dest bins) |
+
+**What works without them:** Reconciliation falls back to OData queries automatically (slower but functional). Inventory sync and pre-operation guards are unaffected.
+
+**Action:** Ask Winder to add `IBT1` and `WTQ1` to `b1s_sqltable.conf` and restart the SAP Service Layer.
+
+**Note:** The `WTQ1` query also failed with `Column 'BnAbsEntry' not exist` — once the table is in the AllowList, verify the correct column name for this SAP version. The query is in `sapService.js:1182-1183`.
+
+**Diagnostic script:** `server/scripts/test-sap-connection.js` — run to verify after AllowList update.
+
+---
+
 ### Mongoose Duplicate Index Warnings (2026-01-14)
 **Status:** LOW PRIORITY
 

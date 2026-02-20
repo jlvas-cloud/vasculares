@@ -333,7 +333,7 @@ function clearUserSession(userId) {
  * @param {string} params.comments Optional comments
  * @returns {Object} SAP document info { DocEntry, DocNum }
  */
-async function createStockTransfer({ fromWarehouse, toWarehouse, toBinAbsEntry, items, comments }) {
+async function createStockTransfer({ fromWarehouse, toWarehouse, toBinAbsEntry, items, comments, docDate }) {
   await ensureSession();
 
   // Build stock transfer lines with batch numbers
@@ -365,6 +365,7 @@ async function createStockTransfer({ fromWarehouse, toWarehouse, toBinAbsEntry, 
   });
 
   const transferPayload = {
+    DocDate: docDate || new Date().toISOString().split('T')[0],
     FromWarehouse: fromWarehouse,
     ToWarehouse: toWarehouse,
     Comments: comments || 'Transfer from Vasculares system',
@@ -521,7 +522,7 @@ async function getCustomers(search = '', limit = 20) {
  * @param {string} params.comments Comments (patient, doctor, procedure info)
  * @returns {Object} SAP document info { DocEntry, DocNum }
  */
-async function createDeliveryNote({ cardCode, cardName, warehouseCode, binAbsEntry, items, comments, doctorName }) {
+async function createDeliveryNote({ cardCode, cardName, warehouseCode, binAbsEntry, items, comments, doctorName, docDate }) {
   await ensureSession();
 
   const documentLines = items.map((item, index) => {
@@ -560,6 +561,7 @@ async function createDeliveryNote({ cardCode, cardName, warehouseCode, binAbsEnt
   });
 
   const deliveryPayload = {
+    DocDate: docDate || new Date().toISOString().split('T')[0],
     CardCode: cardCode,
     Comments: comments || 'Consumo registrado desde Vasculares',
     // Required UDFs for clinic identification

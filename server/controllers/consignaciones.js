@@ -153,7 +153,7 @@ exports.create = async (req, res, next) => {
       return res.status(400).json({ errors: errors.array() });
     }
 
-    const { fromLocationId, toLocationId, items, notes, skipSap } = req.body;
+    const { fromLocationId, toLocationId, items, notes, skipSap, docDate } = req.body;
 
     // ============================================
     // PHASE 1: VALIDATION (no saves)
@@ -279,6 +279,7 @@ exports.create = async (req, res, next) => {
           toBinAbsEntry: toLocation.sapIntegration.binAbsEntry,
           items: sapTransferItems,
           comments: `Consignación Vasculares - ${toLocation.name}`,
+          docDate: docDate || undefined,
         });
         console.log('SAP Stock Transfer created:', sapResult);
       } catch (sapError) {
@@ -1068,6 +1069,7 @@ exports.retrySap = async (req, res, next) => {
         toBinAbsEntry: toLocation.sapIntegration.binAbsEntry,
         items: sapTransferItems,
         comments: `Consignación Vasculares - ${toLocation.name} (Retry)`,
+        docDate: consignacion.createdAt ? new Date(consignacion.createdAt).toISOString().split('T')[0] : undefined,
       });
 
       // Update with success
