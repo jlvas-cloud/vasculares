@@ -5,7 +5,7 @@
 ### SAP AllowList: IBT1 and WTQ1 Tables Missing (2026-02-20)
 **Status:** PENDING — Requires SAP partner (Winder)
 
-The `b1s_sqltable.conf` on `PRUEBA_HOSPAL` is missing two tables needed for reconciliation SQL queries:
+The `b1s_sqltable.conf` on `HOSP_2` is missing two tables needed for reconciliation SQL queries:
 
 | Table | Purpose | Used By |
 |-------|---------|---------|

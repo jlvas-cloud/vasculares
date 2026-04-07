@@ -4,8 +4,8 @@ This document tracks all SAP tables that need to be added to `b1s_sqltable.conf`
 
 ## Current Status (Tested 2026-01-14)
 
-| Table | HOSPAL_ENERO | Production | Used For |
-|-------|--------------|------------|----------|
+| Table | HOSP_2 | Production | Used For |
+|-------|--------|------------|----------|
 | OIBT | ✓ Available | TBD | Inventory sync |
 | OBTN | ✓ Available | TBD | Inventory sync |
 | OPDN | ✓ Available | TBD | Reconciliation (Goods Receipts) |
@@ -51,8 +51,8 @@ Pueden agregarlas al final de la lista existente.
 
 These tables enable server-side filtering for reconciliation queries. Without them, the system falls back to OData (works but less efficient).
 
-| Table | Description | Status in HOSPAL_ENERO |
-|-------|-------------|------------------------|
+| Table | Description | Status in HOSP_2 |
+|-------|-------------|------------------|
 | OPDN | Purchase Delivery Notes (Header) | ✓ Already available |
 | PDN1 | Purchase Delivery Notes (Lines) | ✓ Already available |
 | OWTR | Stock Transfers (Header) | ✗ Needs AllowList |

@@ -28,15 +28,23 @@ exports.triggerRun = async (req, res, next) => {
       });
     }
 
-    // Run reconciliation
-    const result = await reconciliationService.runReconciliation(req.companyId, {
+    // Fire-and-forget: reconciliation can exceed Heroku's 30s HTTP timeout for
+    // large date windows. The service persists RUNNING → COMPLETED/FAILED state
+    // to the reconciliationruns collection, so the frontend polls for progress.
+    reconciliationService.runReconciliation(req.companyId, {
       runType: 'ON_DEMAND',
       fromDate: fromDate ? new Date(fromDate) : null,
       toDate: toDate ? new Date(toDate) : null,
       triggeredBy: req.user,
+    }).catch((err) => {
+      console.error('Async reconciliation run failed:', err);
     });
 
-    res.json(result);
+    // Return immediately — frontend polls /status to detect completion
+    res.status(202).json({
+      status: 'STARTED',
+      message: 'Reconciliación iniciada. Consulte el estado para ver el progreso.',
+    });
   } catch (error) {
     console.error('Error triggering reconciliation:', error);
     next(error);

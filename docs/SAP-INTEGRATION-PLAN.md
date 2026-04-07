@@ -488,8 +488,8 @@ Add to system settings or a dedicated collection:
 ## SAP Environment
 ```
 Server: https://94.74.64.47:50000/b1s/v1
-Company: HOSPAL_ENERO (development/testing)
-         HOSPAL_TESTING (legacy - outdated, items missing)
+Company: HOSP_2 (development/testing)
+         HOSPAL_ENERO, PRUEBA_HOSPAL, HOSPAL_TESTING (legacy - no longer used)
 ```
 
 **Note**: Development database requires manual exchange rate updates for current dates.

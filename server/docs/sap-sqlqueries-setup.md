@@ -281,7 +281,7 @@ When deploying to production SAP:
 
 **Demo Server:**
 - URL: https://94.74.64.47:50000/b1s/v1
-- Database: HOSPAL_ENERO
+- Database: HOSP_2
 - User: Profes02
 
 **SAP Partner:** Winder Mejia Ortiz

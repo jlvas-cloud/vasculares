@@ -16,6 +16,9 @@
  * - consumos (consumption records)
  * - goodsreceipts (incoming stock)
  * - transacciones (movement audit log)
+ * - vascularesconfigs (reconciliation goLiveDate)
+ * - externalsapdocuments (external SAP docs detected)
+ * - reconciliationruns (reconciliation job history)
  *
  * Usage:
  *   node scripts/reset-inventory-data.js --dry-run    # Preview what will be deleted
@@ -44,6 +47,9 @@ const COLLECTIONS_TO_DELETE = [
   'consumos',
   'goodsreceipts',
   'transacciones',
+  'vascularesconfigs',
+  'externalsapdocuments',
+  'reconciliationruns',
 ];
 
 // Collections to KEEP (master data)

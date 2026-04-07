@@ -233,7 +233,7 @@ SAP_CREDENTIALS_KEY=<64-hex-chars>               # Generate: node -e "console.lo
 
 # SAP Connection (service account - used for queries, not document creation)
 SAP_B1_SERVICE_URL=https://94.74.64.47:50000/b1s/v1
-SAP_B1_COMPANY_DB=HOSPAL_ENERO
+SAP_B1_COMPANY_DB=HOSP_2
 SAP_B1_USERNAME=manager
 SAP_B1_PASSWORD=...
 

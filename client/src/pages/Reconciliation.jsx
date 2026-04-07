@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { reconciliationApi } from '../lib/api';
 import { Button } from '../components/ui/button';
@@ -55,6 +55,10 @@ export default function Reconciliation() {
   const [importDoc, setImportDoc] = useState(null);
   const [validationResult, setValidationResult] = useState(null);
   const [isValidating, setIsValidating] = useState(false);
+  // While polling an async reconciliation run, stores the previous latest
+  // runId (null if none existed) so we can detect when a new run appears.
+  // Non-null also doubles as the "is polling" flag.
+  const [pollingForNewRun, setPollingForNewRun] = useState(null);
   const queryClient = useQueryClient();
   const toast = useToast();
 
@@ -64,11 +68,11 @@ export default function Reconciliation() {
     queryFn: () => reconciliationApi.getConfig().then((res) => res.data),
   });
 
-  // Get reconciliation status
+  // Get reconciliation status. While polling an async run, refetch every 2s.
   const { data: status, isLoading: statusLoading } = useQuery({
     queryKey: ['reconciliation-status'],
     queryFn: () => reconciliationApi.getStatus().then((res) => res.data),
-    refetchInterval: 30000, // Refresh every 30 seconds
+    refetchInterval: pollingForNewRun ? 2000 : 30000,
   });
 
   // Get external documents
@@ -83,27 +87,66 @@ export default function Reconciliation() {
     queryFn: () => reconciliationApi.getRunHistory(5).then((res) => res.data),
   });
 
-  // Trigger reconciliation
+  // Trigger reconciliation. The backend returns 202 immediately and runs
+  // asynchronously to avoid Heroku's 30s HTTP timeout. We then poll the
+  // status endpoint until a *new* run appears and reaches a terminal state.
   const runMutation = useMutation({
     mutationFn: (options = {}) => reconciliationApi.run(options),
-    onSuccess: (result) => {
-      queryClient.invalidateQueries(['reconciliation-status']);
-      queryClient.invalidateQueries(['external-documents']);
-      queryClient.invalidateQueries(['reconciliation-runs']);
+    onSuccess: () => {
       setCustomDateDialogOpen(false);
       setCustomFromDate('');
       setCustomToDate('');
-      const found = result.data?.stats?.externalDocsFound || 0;
-      if (found > 0) {
-        toast.warning(`Reconciliación completada. Se encontraron ${found} documentos externos.`);
-      } else {
-        toast.success('Reconciliación completada. No se encontraron documentos externos.');
-      }
+      // Capture the previous latest run id (or a sentinel) so we can detect
+      // when a brand-new run record appears, regardless of any old COMPLETED
+      // runs still showing in the status payload.
+      const previousRunId = status?.latestRun?.runId || null;
+      setPollingForNewRun({ previousRunId, startedAt: Date.now() });
+      queryClient.invalidateQueries(['reconciliation-status']);
+      toast.success('Reconciliación iniciada...');
     },
     onError: (error) => {
       toast.error(error.response?.data?.error || 'Error al ejecutar reconciliación');
     },
   });
+
+  // Watch the latest run while polling; when a new run finishes, show the
+  // result toast, refresh dependent queries, and stop polling.
+  useEffect(() => {
+    if (!pollingForNewRun) return;
+
+    // Safety timeout: if the backend failed to create a run record or the
+    // run is stuck, stop polling after 10 minutes so we don't spin forever.
+    const POLL_TIMEOUT_MS = 10 * 60 * 1000;
+    if (Date.now() - pollingForNewRun.startedAt > POLL_TIMEOUT_MS) {
+      toast.error('Reconciliación tardó demasiado. Consulte el historial de corridas.');
+      setPollingForNewRun(null);
+      queryClient.invalidateQueries(['reconciliation-runs']);
+      return;
+    }
+
+    const latest = status?.latestRun;
+    if (!latest || !latest.runId) return;
+    // Still seeing the previous run — keep polling until the new one shows up
+    if (latest.runId === pollingForNewRun.previousRunId) return;
+
+    if (latest.status === 'COMPLETED') {
+      const found = latest.stats?.externalDocsFound || 0;
+      if (found > 0) {
+        toast.warning(`Reconciliación completada. Se encontraron ${found} documentos externos.`);
+      } else {
+        toast.success('Reconciliación completada. No se encontraron documentos externos.');
+      }
+      setPollingForNewRun(null);
+      queryClient.invalidateQueries(['external-documents']);
+      queryClient.invalidateQueries(['reconciliation-runs']);
+    } else if (latest.status === 'FAILED') {
+      const msg = latest.errors?.[0]?.message || 'Error desconocido';
+      toast.error(`Reconciliación falló: ${msg}`);
+      setPollingForNewRun(null);
+      queryClient.invalidateQueries(['reconciliation-runs']);
+    }
+    // else RUNNING — keep polling
+  }, [status, pollingForNewRun, queryClient, toast]);
 
   // Run with default date window (moving window)
   const handleRunDefault = () => {
@@ -223,17 +266,17 @@ export default function Reconciliation() {
           <Button
             variant="outline"
             onClick={() => setCustomDateDialogOpen(true)}
-            disabled={runMutation.isPending || status?.latestRun?.status === 'RUNNING' || !config?.isConfigured}
+            disabled={runMutation.isPending || pollingForNewRun || status?.latestRun?.status === 'RUNNING' || !config?.isConfigured}
           >
             <Calendar className="mr-2 h-4 w-4" />
             Rango Personalizado
           </Button>
           <Button
             onClick={handleRunDefault}
-            disabled={runMutation.isPending || status?.latestRun?.status === 'RUNNING' || !config?.isConfigured}
+            disabled={runMutation.isPending || pollingForNewRun || status?.latestRun?.status === 'RUNNING' || !config?.isConfigured}
           >
-            <RefreshCw className={`mr-2 h-4 w-4 ${runMutation.isPending ? 'animate-spin' : ''}`} />
-            Verificar Ahora
+            <RefreshCw className={`mr-2 h-4 w-4 ${(runMutation.isPending || pollingForNewRun) ? 'animate-spin' : ''}`} />
+            {pollingForNewRun ? 'Reconciliando...' : 'Verificar Ahora'}
           </Button>
         </div>
       </div>
