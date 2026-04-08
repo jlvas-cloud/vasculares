@@ -27,6 +27,7 @@ import {
   Stethoscope,
   FileText,
   Download,
+  Clock,
 } from 'lucide-react';
 import { useToast } from '../components/ui/toast';
 import { formatDate, formatDateTime } from '../lib/utils';
@@ -108,7 +109,16 @@ export default function ConsumptionHistory() {
   };
 
   const getOriginBadge = (consumo) => {
-    // origin undefined or 'APP' means created in app, 'SAP_IMPORT' means imported
+    // origin 'APP' (or undefined) = created in app; 'SAP_IMPORT' = reconciliation import;
+    // 'SAP_HISTORY' = bulk historical import during onboarding (analytics only).
+    if (consumo.origin === 'SAP_HISTORY') {
+      return (
+        <Badge variant="outline" className="bg-slate-100 text-slate-700">
+          <Clock className="h-3 w-3 mr-1" />
+          Histórico
+        </Badge>
+      );
+    }
     if (consumo.origin === 'SAP_IMPORT') {
       return (
         <Badge variant="outline" className="bg-purple-50 text-purple-700">
@@ -234,7 +244,7 @@ export default function ConsumptionHistory() {
                       <div className="md:col-span-2">
                         <div className="font-medium">{consumo.centroName}</div>
                         <div className="text-xs text-muted-foreground">
-                          {formatDateTime(consumo.createdAt)}
+                          {formatDateTime(consumo.consumptionDate || consumo.createdAt)}
                         </div>
                       </div>
                       <div className="text-sm">
@@ -382,7 +392,7 @@ export default function ConsumptionHistory() {
           <DialogHeader>
             <DialogTitle>Detalle de Consumo</DialogTitle>
             <DialogDescription>
-              {selectedConsumo?.centroName} - {formatDateTime(selectedConsumo?.createdAt)}
+              {selectedConsumo?.centroName} - {formatDateTime(selectedConsumo?.consumptionDate || selectedConsumo?.createdAt)}
             </DialogDescription>
           </DialogHeader>
 

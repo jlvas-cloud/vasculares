@@ -978,6 +978,9 @@ async function importDeliveryNote(doc, { Producto, Locacion, Lote, Inventario, C
       lotNumber: i.lotNumber || 'SIN-LOTE',
       quantity: i.quantity,
     })),
+    // Use the SAP document date so analytics place this consumption in the
+    // correct historical month, not the day it was imported.
+    consumptionDate: doc.sapDocDate || new Date(),
     sapIntegration: {
       pushed: true,
       docEntry: doc.sapDocEntry,

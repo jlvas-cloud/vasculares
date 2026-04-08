@@ -49,6 +49,18 @@ const consumoSchema = new Schema({
   // Consumption details
   items: [consumoItemSchema],
 
+  // Canonical business date when consumption occurred. Drives all analytics
+  // queries (Dashboard, Movimientos, trends). The default function runs
+  // BEFORE validation so callsites that omit this field still pass the
+  // `required` check, falling back to procedureDate → now.
+  consumptionDate: {
+    type: Date,
+    required: true,
+    default: function() {
+      return this.procedureDate || new Date();
+    },
+  },
+
   // Optional patient/procedure info
   patientName: String,
   doctorName: String,
@@ -125,9 +137,9 @@ const consumoSchema = new Schema({
   // Origin tracking (for distinguishing app-created vs imported documents)
   origin: {
     type: String,
-    enum: ['APP', 'SAP_IMPORT'],
+    enum: ['APP', 'SAP_IMPORT', 'SAP_HISTORY'],
     default: 'APP',
-    description: 'Where the document was created',
+    description: 'Where the document was created. SAP_HISTORY = bulk historical import during onboarding (analytics only, no inventory impact).',
   },
   importedFromId: {
     type: mongoose.Types.ObjectId,
@@ -137,11 +149,13 @@ const consumoSchema = new Schema({
 }, { timestamps: true });
 
 // Indexes
-consumoSchema.index({ centroId: 1, createdAt: -1 });
+consumoSchema.index({ centroId: 1, consumptionDate: -1 });
+consumoSchema.index({ consumptionDate: -1 });
+consumoSchema.index({ 'sapIntegration.docEntry': 1 }, { sparse: true });
 consumoSchema.index({ 'sapIntegration.docNum': 1 }, { sparse: true });
 consumoSchema.index({ 'sapIntegration.pushed': 1 });
 consumoSchema.index({ status: 1 });
-consumoSchema.index({ createdAt: -1 });
+consumoSchema.index({ origin: 1 });
 
 // Pre-save middleware to calculate totals
 consumoSchema.pre('save', function(next) {

@@ -38,7 +38,7 @@ exports.getMonthlyConsumption = async (req, res, next) => {
     }
 
     // Build match criteria on Consumos collection
-    const matchCriteria = { createdAt: dateFilter };
+    const matchCriteria = { consumptionDate: dateFilter };
 
     // Aggregate by month and product from Consumos
     const pipeline = [
@@ -56,8 +56,8 @@ exports.getMonthlyConsumption = async (req, res, next) => {
         $group: {
           _id: {
             productId: '$items.productId',
-            year: { $year: '$createdAt' },
-            month: { $month: '$createdAt' },
+            year: { $year: '$consumptionDate' },
+            month: { $month: '$consumptionDate' },
           },
           totalQuantity: { $sum: '$items.quantity' },
           transactionCount: { $sum: 1 },
@@ -121,7 +121,7 @@ exports.getConsumptionByLocation = async (req, res, next) => {
     }
 
     const mongoose = require('mongoose');
-    const matchCriteria = { createdAt: dateFilter };
+    const matchCriteria = { consumptionDate: dateFilter };
     if (locationId) matchCriteria.centroId = new mongoose.Types.ObjectId(locationId);
 
     const pipeline = [
@@ -207,15 +207,15 @@ exports.getConsumptionTrends = async (req, res, next) => {
 
     // Get consumption per product with averages from Consumos
     const trends = await Consumos.aggregate([
-      { $match: { createdAt: { $gte: startDate } } },
+      { $match: { consumptionDate: { $gte: startDate } } },
       { $unwind: '$items' },
       {
         $group: {
           _id: '$items.productId',
           totalConsumed: { $sum: '$items.quantity' },
           transactionCount: { $sum: 1 },
-          firstTransaction: { $min: '$createdAt' },
-          lastTransaction: { $max: '$createdAt' },
+          firstTransaction: { $min: '$consumptionDate' },
+          lastTransaction: { $max: '$consumptionDate' },
         },
       },
       {
@@ -351,7 +351,7 @@ exports.getConsumptionBySize = async (req, res, next) => {
       dateFilter.$gte = threeMonthsAgo;
     }
 
-    const matchCriteria = { createdAt: dateFilter };
+    const matchCriteria = { consumptionDate: dateFilter };
 
     // Aggregate by size from Consumos
     const sizeData = await Consumos.aggregate([
@@ -653,7 +653,7 @@ exports.getPlanningData = async (req, res, next) => {
       const { getConsumosModel } = require('../getModel');
       const Consumos = await getConsumosModel(req.companyId);
 
-      const consumosMatch = { createdAt: { $gte: twelveMonthsAgo } };
+      const consumosMatch = { consumptionDate: { $gte: twelveMonthsAgo } };
       if (isLocationView) {
         // Specific centro
         consumosMatch.centroId = new mongoose.Types.ObjectId(locationId);
@@ -666,8 +666,8 @@ exports.getPlanningData = async (req, res, next) => {
           $group: {
             _id: '$items.productId',
             totalConsumed: { $sum: '$items.quantity' },
-            firstTransaction: { $min: '$createdAt' },
-            lastTransaction: { $max: '$createdAt' },
+            firstTransaction: { $min: '$consumptionDate' },
+            lastTransaction: { $max: '$consumptionDate' },
           },
         },
         {
@@ -910,7 +910,7 @@ exports.getMonthlyMovements = async (req, res, next) => {
       {
         $match: {
           centroId: new mongoose.Types.ObjectId(centroId),
-          createdAt: { $gte: twelveMonthsAgo },
+          consumptionDate: { $gte: twelveMonthsAgo },
         },
       },
       { $unwind: '$items' },
@@ -918,8 +918,8 @@ exports.getMonthlyMovements = async (req, res, next) => {
         $group: {
           _id: {
             productId: '$items.productId',
-            year: { $year: '$createdAt' },
-            month: { $month: '$createdAt' },
+            year: { $year: '$consumptionDate' },
+            month: { $month: '$consumptionDate' },
           },
           quantity: { $sum: '$items.quantity' },
         },
@@ -1075,14 +1075,14 @@ exports.getDashboardConsumption = async (req, res, next) => {
 
     // Aggregate: total items consumed per centro per month
     const consumptionData = await Consumos.aggregate([
-      { $match: { createdAt: { $gte: twelveMonthsAgo } } },
+      { $match: { consumptionDate: { $gte: twelveMonthsAgo } } },
       { $unwind: '$items' },
       {
         $group: {
           _id: {
             centroId: '$centroId',
-            year: { $year: '$createdAt' },
-            month: { $month: '$createdAt' },
+            year: { $year: '$consumptionDate' },
+            month: { $month: '$consumptionDate' },
           },
           quantity: { $sum: '$items.quantity' },
         },

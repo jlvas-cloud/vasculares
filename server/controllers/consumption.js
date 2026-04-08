@@ -414,6 +414,7 @@ exports.create = async (req, res, next) => {
         centroName: centro.name,
         sapCardCode: centro.sapIntegration.cardCode,
         items: consumoItems,
+        consumptionDate: procedureDate ? new Date(procedureDate) : new Date(),
         patientName,
         doctorName,
         procedureDate: procedureDate ? new Date(procedureDate) : null,
@@ -542,14 +543,14 @@ exports.getHistory = async (req, res, next) => {
     const query = {};
     if (centroId) query.centroId = centroId;
     if (startDate || endDate) {
-      query.createdAt = {};
-      if (startDate) query.createdAt.$gte = new Date(startDate);
-      if (endDate) query.createdAt.$lte = new Date(endDate);
+      query.consumptionDate = {};
+      if (startDate) query.consumptionDate.$gte = new Date(startDate);
+      if (endDate) query.consumptionDate.$lte = new Date(endDate);
     }
 
     const [consumos, total] = await Promise.all([
       Consumos.find(query)
-        .sort({ createdAt: -1 })
+        .sort({ consumptionDate: -1 })
         .skip(parseInt(skip))
         .limit(parseInt(limit))
         .lean(),
@@ -788,7 +789,7 @@ exports.retrySap = async (req, res, next) => {
         items: sapItems,
         comments: sapComments,
         doctorName: consumo.doctorName || null,
-        docDate: consumo.createdAt ? new Date(consumo.createdAt).toISOString().split('T')[0] : undefined,
+        docDate: (consumo.consumptionDate || consumo.createdAt) ? new Date(consumo.consumptionDate || consumo.createdAt).toISOString().split('T')[0] : undefined,
       });
 
       // Update with success

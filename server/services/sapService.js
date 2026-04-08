@@ -1409,6 +1409,86 @@ async function getRecentDeliveryNotes(since, itemCodes = null) {
 }
 
 /**
+ * Fetch historical Delivery Notes within an arbitrary date range.
+ * Used by the onboarding historical-consumption import script.
+ *
+ * Chunks the query by month internally because SAP's pagination ceiling
+ * (100 pages × ~20 docs = ~2000 docs per fetchAllPages call) would otherwise
+ * truncate large date ranges.
+ *
+ * @param {Date} fromDate - Inclusive start date
+ * @param {Date} toDate - Inclusive end date
+ * @param {Array<string>} itemCodes - Required: filter to documents containing these item codes
+ * @param {Function} [onProgress] - Optional callback({ month, fetched, kept }) per month
+ * @returns {Promise<{success: boolean, documents: Array, error?: string}>}
+ */
+async function getHistoricalDeliveryNotes(fromDate, toDate, itemCodes = null, onProgress = null) {
+  await ensureSession();
+  try {
+    const itemCodeSet = itemCodes && itemCodes.length > 0 ? new Set(itemCodes) : null;
+    const allMapped = [];
+
+    // Iterate month by month: [monthStart, nextMonthStart)
+    let cursor = new Date(fromDate.getFullYear(), fromDate.getMonth(), 1);
+    const endCursor = new Date(toDate.getFullYear(), toDate.getMonth() + 1, 1);
+
+    while (cursor < endCursor) {
+      const monthStart = cursor;
+      const nextMonth = new Date(cursor.getFullYear(), cursor.getMonth() + 1, 1);
+      // SAP filter uses inclusive ge/le; use last day of month for upper bound
+      const monthEnd = new Date(nextMonth.getTime() - 24 * 60 * 60 * 1000);
+
+      const fromStr = formatODataDate(monthStart);
+      const toStr = formatODataDate(monthEnd);
+      const endpoint = `/DeliveryNotes?$filter=DocDate ge '${fromStr}' and DocDate le '${toStr}'&$select=DocEntry,DocNum,DocDate,CardCode,CardName,Comments,DocumentLines&$orderby=DocDate asc`;
+
+      const rawDocs = await fetchAllPages(endpoint);
+
+      let monthDocs = rawDocs;
+      if (itemCodeSet) {
+        monthDocs = rawDocs.filter(doc =>
+          doc.DocumentLines?.some(line => itemCodeSet.has(line.ItemCode))
+        );
+      }
+
+      const mapped = monthDocs.map(doc => ({
+        sapDocEntry: doc.DocEntry,
+        sapDocNum: doc.DocNum,
+        sapDocType: 'DeliveryNote',
+        sapDocDate: new Date(doc.DocDate),
+        cardCode: doc.CardCode,
+        cardName: doc.CardName,
+        comments: doc.Comments,
+        items: (doc.DocumentLines || []).map(line => ({
+          sapItemCode: line.ItemCode,
+          quantity: line.Quantity,
+          batchNumber: line.BatchNumbers?.[0]?.BatchNumber || null,
+          warehouseCode: line.WarehouseCode,
+          binAbsEntry: line.DocumentLinesBinAllocations?.[0]?.BinAbsEntry || null,
+        })),
+      }));
+
+      allMapped.push(...mapped);
+
+      if (onProgress) {
+        onProgress({
+          month: `${monthStart.getFullYear()}-${String(monthStart.getMonth() + 1).padStart(2, '0')}`,
+          fetched: rawDocs.length,
+          kept: mapped.length,
+        });
+      }
+
+      cursor = nextMonth;
+    }
+
+    return { success: true, documents: allMapped };
+  } catch (error) {
+    console.error('Error fetching historical DeliveryNotes:', error.message);
+    return { success: false, documents: [], error: error.message };
+  }
+}
+
+/**
  * Fallback OData-based query for Delivery Notes
  * Used if SQL query fails (e.g., tables not in b1s_sqltable.conf)
  */
@@ -1474,6 +1554,8 @@ module.exports = {
   getRecentPurchaseDeliveryNotes,
   getRecentStockTransfers,
   getRecentDeliveryNotes,
+  // Historical bulk import (onboarding)
+  getHistoricalDeliveryNotes,
   // Single document fetch (for import with full bin data)
   getStockTransferByDocEntry,
   // Per-user session management

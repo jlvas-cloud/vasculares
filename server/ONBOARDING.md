@@ -149,6 +149,64 @@ node scripts/sync-inventory-from-sap.js --product "419113"
 
 ---
 
+### Step 5: Import Historical Consumption (optional but recommended)
+
+Pulls historical SAP DeliveryNotes and creates `Consumo` records with
+`origin: SAP_HISTORY`. This makes the Dashboard and Movimientos pages
+show prior months of consumption immediately after onboarding — so users
+see real trends instead of an empty chart.
+
+**Prerequisites:**
+- All centros have their `cardCode` linked in the Locations UI (Step 3)
+- Inventory sync already ran (Step 4) — otherwise the `goLiveDate` isn't set
+
+**What it does:**
+- Queries SAP `DeliveryNotes` month by month for the date range
+- Filters to documents containing any of our tracked products (`sapItemCode`)
+- Matches each document's `CardCode` to a centro
+- Creates local `Consumo` records with `consumptionDate = SAP DocDate`
+- **Does NOT touch `lotes` or `inventario`** — current inventory is preserved
+
+```bash
+# Preview (recommended first)
+node scripts/import-historical-consumptions.js --months 12 --dry-run
+
+# Import last 12 months
+node scripts/import-historical-consumptions.js --months 12
+
+# Or an explicit date range
+node scripts/import-historical-consumptions.js --from 2025-04-01 --to 2026-04-01
+
+# Or limit to a single centro
+node scripts/import-historical-consumptions.js --months 12 --centro CCVNORTE
+```
+
+**Output example:**
+```
+Fetching SAP DeliveryNotes (one month at a time)...
+  2025-04: 732 total, 35 match our products
+  2025-05: 752 total, 29 match our products
+  ...
+  2026-04: 17 total, 4 match our products
+
+Total: 407 relevant documents
+
+Created:                400
+Skipped (already exist): 3
+Skipped (no centro match): 4
+
+By centro:
+  CECANOR: 304
+  CDC:      67
+  ...
+```
+
+**Idempotency:** the script skips any SAP doc already imported (matched by `sapIntegration.docEntry`), so it's safe to re-run.
+
+**Rollback:** `db.consumos.deleteMany({ origin: 'SAP_HISTORY' })` removes all historical records without touching real consumptions.
+
+---
+
 ## Verification
 
 After completing all steps, verify the data:

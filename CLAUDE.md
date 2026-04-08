@@ -35,6 +35,8 @@ vasculares/
 │   │   ├── import-orsiro-codes.js    # Import products
 │   │   ├── import-centros.js         # Import locations
 │   │   ├── sync-inventory-from-sap.js # Pull inventory from SAP
+│   │   ├── import-historical-consumptions.js # Pull historical consumos for analytics
+│   │   ├── backfill-consumption-date.js # One-time migration (consumptionDate field)
 │   │   └── reset-inventory-data.js    # Clear test data
 │   ├── ONBOARDING.md           # Step-by-step setup guide
 │   ├── TODO.md                 # Known issues & completed work
@@ -332,6 +334,8 @@ heroku logs --tail --app vasculares-app
 ## Key Architecture Decisions
 
 - **Consumos vs Transacciones for analytics:** `Consumos` is the authoritative source for consumption analytics (has all historical data with `items[]` array). `Transacciones` is used only for CONSIGNMENT outflow queries and as a general audit log.
+- **`consumptionDate` drives all Consumo analytics:** Dashboard, Movimientos, trends, and by-centro reports all group by `consumptionDate` (NOT `createdAt`). This is the canonical business date: populated from `procedureDate` for APP records, `sapDocDate` for SAP_IMPORT and SAP_HISTORY records. Use `backfill-consumption-date.js` for any legacy records missing the field.
+- **SAP_HISTORY consumptions are analytics-only:** the `import-historical-consumptions.js` script creates `Consumo` records with `origin: 'SAP_HISTORY'` that do NOT touch `lotes` or `inventario`. They exist purely so the Dashboard/Movimientos show pre-onboarding trends. Distinguished in the UI with a "Histórico" badge.
 - **Per-centro bar charts (not stacked):** Dashboard shows individual bar chart per centro rather than stacked bars — easier to read at a glance.
 - **Constrained OCR matching:** Extraction only matches against products/lots actually at the selected Centro, preventing false matches.
 
