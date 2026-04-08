@@ -91,6 +91,16 @@ const LOCATIONS = [
       binCode: '10-CERECA',
     },
   },
+  {
+    name: 'CCVNORTE',
+    fullName: 'Centro Vital Cardiovascular Del Norte',
+    type: 'CENTRO',
+    sapIntegration: {
+      warehouseCode: '10',
+      binAbsEntry: 45,
+      binCode: '10-CCVNORTE',
+    },
+  },
 ];
 
 async function importCentros() {

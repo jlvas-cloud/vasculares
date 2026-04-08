@@ -92,6 +92,7 @@ node scripts/import-centros.js
 | INCAE | CENTRO | 10 | 10-INCAE (AbsEntry: 37) |
 | CENICARDIO | CENTRO | 10 | 10-CENICARDIO (AbsEntry: 38) |
 | CERECA | CENTRO | 10 | 10-CERECA (AbsEntry: 40) |
+| CCVNORTE | CENTRO | 10 | 10-CCVNORTE (AbsEntry: 45) |
 
 **To add more centros:** Edit `scripts/import-centros.js` and add to the `LOCATIONS` array.
 

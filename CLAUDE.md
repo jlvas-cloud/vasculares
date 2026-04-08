@@ -319,7 +319,7 @@ heroku logs --tail --app vasculares-app
 - **Products:** 92 total
   - 84 STENTS_CORONARIOS (Orsiro Mission 419xxx + Legacy Orsiro 364xxx/391xxx)
   - 8 STENTS_RECUBIERTOS (Papyrus 369xxx/381xxx)
-- **Locations:** 6 configured (1 warehouse + 5 centros)
+- **Locations:** 7 configured (1 warehouse + 6 centros)
 - **SAP Integration:** Working (tested with real SAP)
 - **User Management:** Implemented with role-based access
 - **Admin User:** jlvasquezb@hospalmedica.com (Jose Luis Vasquez)
