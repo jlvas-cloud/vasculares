@@ -95,6 +95,14 @@ exports.createGoodsReceipt = async (req, res, next) => {
     // PHASE 1: VALIDATION (no saves)
     // ============================================
 
+    // Validate DocDate (posting date) if provided — prevent SAP datetime overflow
+    if (docDate) {
+      const docYear = new Date(docDate).getFullYear();
+      if (isNaN(docYear) || docYear < 2000 || docYear > new Date().getFullYear() + 1) {
+        return res.status(400).json({ error: `Fecha de contabilización inválida: "${docDate}". Verifique el año.` });
+      }
+    }
+
     // Validate request
     if (!locationId || !items || items.length === 0) {
       return res.status(400).json({ error: 'locationId and items are required' });
@@ -136,6 +144,14 @@ exports.createGoodsReceipt = async (req, res, next) => {
       }
       if (!item.lotNumber || !item.quantity || !item.expiryDate) {
         return res.status(400).json({ error: 'Each item requires lotNumber, quantity, and expiryDate' });
+      }
+      // Validate expiry date is a real date within SQL Server's datetime range
+      // (prevents SAP error: "conversion of datetime2 to datetime out-of-range")
+      const expiryYear = new Date(item.expiryDate).getFullYear();
+      if (isNaN(expiryYear) || expiryYear < 2000 || expiryYear > new Date().getFullYear() + 10) {
+        return res.status(400).json({
+          error: `Fecha de vencimiento inválida para lote "${item.lotNumber}": "${item.expiryDate}". Verifique el año.`
+        });
       }
       if (pushToSap && !product.sapItemCode) {
         return res.status(400).json({

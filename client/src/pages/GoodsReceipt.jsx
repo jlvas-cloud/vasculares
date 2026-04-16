@@ -225,6 +225,17 @@ export default function GoodsReceipt() {
       return;
     }
 
+    // Validate expiry dates are reasonable (prevent SAP datetime overflow)
+    const maxYear = new Date().getFullYear() + 10;
+    const badDate = validItems.find((item) => {
+      const year = new Date(item.expiryDate).getFullYear();
+      return isNaN(year) || year > maxYear || year < 2000;
+    });
+    if (badDate) {
+      toast.error(`Fecha de vencimiento inválida: "${badDate.expiryDate}". Verifique el año.`);
+      return;
+    }
+
     // Validate batches against SAP before creating
     setValidatingBatches(true);
     try {
@@ -426,6 +437,7 @@ export default function GoodsReceipt() {
                   type="date"
                   value={docDate}
                   onChange={(e) => setDocDate(e.target.value)}
+                  max={`${new Date().getFullYear() + 1}-12-31`}
                 />
               </div>
             </div>
@@ -600,7 +612,11 @@ export default function GoodsReceipt() {
                             handleItemChange(item.id, 'expiryDate', e.target.value)
                           }
                           min={new Date().toISOString().split('T')[0]}
+                          max={`${new Date().getFullYear() + 10}-12-31`}
                         />
+                        {item.expiryDate && new Date(item.expiryDate).getFullYear() > new Date().getFullYear() + 10 && (
+                          <p className="text-xs text-red-500 mt-1">Fecha inválida — verifique el año</p>
+                        )}
                       </div>
                     </div>
                   </div>
@@ -735,7 +751,9 @@ export default function GoodsReceipt() {
                                 onChange={(e) =>
                                   handleExtractedItemChange(item.id, 'expiryDate', e.target.value)
                                 }
-                                className="h-8 text-xs"
+                                min={new Date().toISOString().split('T')[0]}
+                                max={`${new Date().getFullYear() + 10}-12-31`}
+                                className={`h-8 text-xs ${item.expiryDate && new Date(item.expiryDate).getFullYear() > new Date().getFullYear() + 10 ? 'border-red-500' : ''}`}
                               />
                             </td>
                             <td className="px-3 py-2">

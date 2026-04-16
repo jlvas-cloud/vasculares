@@ -901,6 +901,7 @@ export default function Consumption() {
                   type="date"
                   value={docDate}
                   onChange={(e) => setDocDate(e.target.value)}
+                  max={`${new Date().getFullYear() + 1}-12-31`}
                 />
               </div>
               <div className="md:col-span-2 grid gap-2">

@@ -159,6 +159,14 @@ exports.create = async (req, res, next) => {
     // PHASE 1: VALIDATION (no saves)
     // ============================================
 
+    // Validate DocDate if provided — prevent SAP datetime overflow
+    if (docDate) {
+      const docYear = new Date(docDate).getFullYear();
+      if (isNaN(docYear) || docYear < 2000 || docYear > new Date().getFullYear() + 1) {
+        return res.status(400).json({ error: `Fecha de contabilización inválida: "${docDate}". Verifique el año.` });
+      }
+    }
+
     // Validate locations exist
     const Locaciones = await getLocacionesModel(req.companyId);
     const fromLocation = await Locaciones.findById(fromLocationId).lean();

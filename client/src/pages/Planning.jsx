@@ -1060,6 +1060,7 @@ export default function Planning() {
                 value={consignmentDocDate}
                 onChange={(e) => setConsignmentDocDate(e.target.value)}
                 className="w-auto"
+                max={`${new Date().getFullYear() + 1}-12-31`}
               />
             </div>
           </div>
