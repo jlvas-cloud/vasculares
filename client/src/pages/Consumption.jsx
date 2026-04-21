@@ -883,6 +883,7 @@ export default function Consumption() {
                   type="date"
                   value={procedureDate}
                   onChange={(e) => setProcedureDate(e.target.value)}
+                  max={`${new Date().getFullYear() + 1}-12-31`}
                 />
               </div>
               <div className="grid gap-2">

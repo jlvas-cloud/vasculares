@@ -335,6 +335,8 @@ exports.create = async (req, res, next) => {
         comments: sapComments,
         doctorName: doctorName || null,
         docDate: docDate || undefined,
+        procedureDate: procedureDate || undefined,
+        patientName: patientName || undefined,
       });
 
       sapResult = {
@@ -798,6 +800,8 @@ exports.retrySap = async (req, res, next) => {
         comments: sapComments,
         doctorName: consumo.doctorName || null,
         docDate: (consumo.consumptionDate || consumo.createdAt) ? new Date(consumo.consumptionDate || consumo.createdAt).toISOString().split('T')[0] : undefined,
+        procedureDate: consumo.procedureDate || undefined,
+        patientName: consumo.patientName || undefined,
       });
 
       // Update with success

@@ -528,7 +528,7 @@ async function getCustomers(search = '', limit = 20) {
  * @param {string} params.comments Comments (patient, doctor, procedure info)
  * @returns {Object} SAP document info { DocEntry, DocNum }
  */
-async function createDeliveryNote({ cardCode, cardName, warehouseCode, binAbsEntry, items, comments, doctorName, docDate }) {
+async function createDeliveryNote({ cardCode, cardName, warehouseCode, binAbsEntry, items, comments, doctorName, docDate, procedureDate, patientName }) {
   await ensureSession();
 
   const documentLines = items.map((item, index) => {
@@ -578,6 +578,15 @@ async function createDeliveryNote({ cardCode, cardName, warehouseCode, binAbsEnt
     U_CTS_INST_NAME: doctorName || null,
     DocumentLines: documentLines,
   };
+
+  // Procedure info UDFs — only include when values exist to avoid
+  // sending null to date-type UDFs (which could trigger SQL conversion errors).
+  if (procedureDate) {
+    deliveryPayload.U_CTS_FECHCIR = new Date(procedureDate).toISOString().split('T')[0];
+  }
+  if (patientName) {
+    deliveryPayload.U_CTS_PAC_NAME = patientName;
+  }
 
   if (DEBUG_SAP) {
     console.log('Creating SAP Delivery Note:', JSON.stringify(deliveryPayload, null, 2));
