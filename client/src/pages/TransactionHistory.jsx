@@ -65,7 +65,11 @@ export default function TransactionHistory() {
     });
   };
 
-  // Helper to get SAP sync status display info
+  // Helper to get SAP sync status display info.
+  // Transaction records are audit logs — SAP sync happens on the parent
+  // document (consignment, consumption, goods receipt). Only show an error
+  // badge when there's an actual SAP error message, not when pushed is
+  // simply false (the default for audit records that aren't SAP documents).
   const getSapSyncStatus = (transaction) => {
     const sap = transaction.sapIntegration;
     if (!sap || sap.pushed === undefined) {
@@ -79,13 +83,18 @@ export default function TransactionHistory() {
         color: 'bg-green-100 text-green-700 border-green-200',
       };
     }
-    return {
-      status: 'failed',
-      label: 'SAP: Error',
-      icon: XCircle,
-      color: 'bg-red-100 text-red-700 border-red-200',
-      error: sap.error,
-    };
+    // pushed === false: only show error if there's an actual error message.
+    // Otherwise this is just an audit record that doesn't need SAP sync.
+    if (sap.error) {
+      return {
+        status: 'failed',
+        label: 'SAP: Error',
+        icon: XCircle,
+        color: 'bg-red-100 text-red-700 border-red-200',
+        error: sap.error,
+      };
+    }
+    return { status: 'none', label: null, icon: null, color: null };
   };
 
   const hasActiveFilters = Object.values(filters).some((val) => val !== '');
