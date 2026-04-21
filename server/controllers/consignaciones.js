@@ -540,20 +540,37 @@ exports.confirm = async (req, res, next) => {
     const Lotes = await getLotesModel(req.companyId);
     const Transacciones = await getTransaccionesModel(req.companyId);
 
-    // Process each item
+    // Aggregate received items by productId. A consignment can have multiple
+    // items with the same product (different lots picked via FIFO). The frontend
+    // sends one entry per consignment item, so the same productId can appear
+    // multiple times. Processing them separately would double-decrement the
+    // same lote. Aggregating ensures each product is processed exactly once.
+    const aggregatedByProduct = {};
     for (const receivedItem of items) {
-      const consignacionItem = consignacion.items.find(
+      const pid = receivedItem.productId;
+      if (!aggregatedByProduct[pid]) {
+        aggregatedByProduct[pid] = { productId: pid, quantityReceived: 0, notes: receivedItem.notes };
+      }
+      aggregatedByProduct[pid].quantityReceived += receivedItem.quantityReceived;
+      if (receivedItem.notes) aggregatedByProduct[pid].notes = receivedItem.notes;
+    }
+    const aggregatedItems = Object.values(aggregatedByProduct);
+
+    // Process each product (aggregated)
+    for (const receivedItem of aggregatedItems) {
+      // Find ALL consignment items for this product (may be multiple with different lots)
+      const matchingConsignacionItems = consignacion.items.filter(
         (item) => item.productId.toString() === receivedItem.productId
       );
 
-      if (!consignacionItem) {
+      if (matchingConsignacionItems.length === 0) {
         await session.abortTransaction();
         session.endSession();
         return res.status(400).json({ error: `Product ${receivedItem.productId} not in consignment` });
       }
 
       const quantityReceived = receivedItem.quantityReceived;
-      const quantitySent = consignacionItem.quantitySent;
+      const totalSent = matchingConsignacionItems.reduce((sum, i) => sum + i.quantitySent, 0);
 
       // Validate quantity received
       if (quantityReceived < 0) {
@@ -564,7 +581,7 @@ exports.confirm = async (req, res, next) => {
         });
       }
 
-      if (quantityReceived > quantitySent) {
+      if (quantityReceived > totalSent) {
         await session.abortTransaction();
         session.endSession();
         return res.status(400).json({
@@ -572,9 +589,14 @@ exports.confirm = async (req, res, next) => {
         });
       }
 
-      // Update consignment item
-      consignacionItem.quantityReceived = quantityReceived;
-      consignacionItem.notes = receivedItem.notes || consignacionItem.notes;
+      // Update all matching consignment items (distribute received qty sequentially)
+      let remainingToDistribute = quantityReceived;
+      for (const consignacionItem of matchingConsignacionItems) {
+        const toAssign = Math.min(remainingToDistribute, consignacionItem.quantitySent);
+        consignacionItem.quantityReceived = toAssign;
+        consignacionItem.notes = receivedItem.notes || consignacionItem.notes;
+        remainingToDistribute -= toAssign;
+      }
 
       // Find the consignment transactions for this product (FIFO)
       const consignmentTransactions = await Transacciones.find({
@@ -672,7 +694,7 @@ exports.confirm = async (req, res, next) => {
       }
 
       // If partial receipt, return difference to warehouse
-      const difference = quantitySent - quantityReceived;
+      const difference = totalSent - quantityReceived;
       if (difference > 0) {
         let remainingToReturn = difference;
 
