@@ -333,7 +333,7 @@ function clearUserSession(userId) {
  * @param {string} params.comments Optional comments
  * @returns {Object} SAP document info { DocEntry, DocNum }
  */
-async function createStockTransfer({ fromWarehouse, toWarehouse, toBinAbsEntry, items, comments, docDate }) {
+async function createStockTransfer({ fromWarehouse, toWarehouse, toBinAbsEntry, items, comments, docDate, cardCode }) {
   await ensureSession();
 
   // Build stock transfer lines with batch numbers
@@ -371,6 +371,12 @@ async function createStockTransfer({ fromWarehouse, toWarehouse, toBinAbsEntry, 
     Comments: comments || 'Transfer from Vasculares system',
     StockTransferLines: stockTransferLines,
   };
+
+  // Add business partner (Socio de Negocio) if provided — shows the
+  // destination centro's customer info on the SAP document header.
+  if (cardCode) {
+    transferPayload.CardCode = cardCode;
+  }
 
   if (DEBUG_SAP) {
     console.log('Creating SAP Stock Transfer:', JSON.stringify(transferPayload, null, 2));

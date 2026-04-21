@@ -288,6 +288,7 @@ exports.create = async (req, res, next) => {
           items: sapTransferItems,
           comments: `Consignación Vasculares - ${toLocation.name}`,
           docDate: docDate || undefined,
+          cardCode: toLocation.sapIntegration.cardCode || undefined,
         });
         console.log('SAP Stock Transfer created:', sapResult);
       } catch (sapError) {
@@ -1078,6 +1079,8 @@ exports.retrySap = async (req, res, next) => {
         items: sapTransferItems,
         comments: `Consignación Vasculares - ${toLocation.name} (Retry)`,
         docDate: consignacion.createdAt ? new Date(consignacion.createdAt).toISOString().split('T')[0] : undefined,
+        cardCode: toLocation.sapIntegration.cardCode || undefined,
+        cardName: toLocation.sapIntegration.cardName || undefined,
       });
 
       // Update with success
